@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/go-mysql-org/go-mysql/mysql"
-	"github.com/go-mysql-org/go-mysql/replication"
+	"github.com/RiveryIO/go-mysql-binlog-reader/mysql"
+	"github.com/RiveryIO/go-mysql-binlog-reader/replication"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser"
@@ -111,7 +111,7 @@ type testEventHandler struct {
 }
 
 func (h *testEventHandler) OnRow(e *RowsEvent) error {
-	log.Infof("OnRow %s %v\n", e.Action, e.Rows)
+	log.Debugf("OnRow %s %v\n", e.Action, e.Rows)
 	umi, ok := e.Rows[0][4].(uint32) // 4th col is umi. mysqldump gives uint64 instead of uint32
 	if ok && (umi != umiA && umi != umiB && umi != umiC) {
 		return fmt.Errorf("invalid unsigned medium int %d", umi)

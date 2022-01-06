@@ -9,8 +9,8 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/go-mysql-org/go-mysql/mysql"
-	"github.com/go-mysql-org/go-mysql/replication"
+	"github.com/RiveryIO/go-mysql-binlog-reader/mysql"
+	"github.com/RiveryIO/go-mysql-binlog-reader/replication"
 	"github.com/pingcap/errors"
 )
 

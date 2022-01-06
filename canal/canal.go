@@ -12,11 +12,11 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/go-mysql-org/go-mysql/client"
-	"github.com/go-mysql-org/go-mysql/dump"
-	"github.com/go-mysql-org/go-mysql/mysql"
-	"github.com/go-mysql-org/go-mysql/replication"
-	"github.com/go-mysql-org/go-mysql/schema"
+	"github.com/RiveryIO/go-mysql-binlog-reader/client"
+	"github.com/RiveryIO/go-mysql-binlog-reader/dump"
+	"github.com/RiveryIO/go-mysql-binlog-reader/mysql"
+	"github.com/RiveryIO/go-mysql-binlog-reader/replication"
+	"github.com/RiveryIO/go-mysql-binlog-reader/schema"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser"
 	"github.com/siddontang/go-log/log"
@@ -64,7 +64,9 @@ func NewCanal(cfg *Config) (*Canal, error) {
 	c.cfg = cfg
 
 	c.ctx, c.cancel = context.WithCancel(context.Background())
-
+	if cfg.WaitTimeBetweenConnectionSeconds > 0 {
+		cfg.WaitTimeBetweenConnectionSeconds = time.Duration(5) * time.Second
+	}
 	c.dumpDoneCh = make(chan struct{})
 	c.eventHandler = &DummyEventHandler{}
 	c.parser = parser.New()
@@ -192,6 +194,7 @@ func (c *Canal) RunFrom(pos mysql.Position) error {
 	return c.Run()
 }
 
+// Start from selected GTIDSet
 func (c *Canal) StartFromGTID(set mysql.GTIDSet) error {
 	c.master.UpdateGTIDSet(set)
 
@@ -238,15 +241,16 @@ func (c *Canal) run() error {
 }
 
 func (c *Canal) Close() {
-	log.Infof("closing canal")
 	c.m.Lock()
 	defer c.m.Unlock()
 
 	c.cancel()
 	c.syncer.Close()
 	c.connLock.Lock()
-	c.conn.Close()
-	c.conn = nil
+	if c.conn != nil {
+		c.conn.Close()
+		c.conn = nil
+	}
 	c.connLock.Unlock()
 
 	_ = c.eventHandler.OnPosSynced(c.master.Position(), c.master.GTIDSet(), true)
@@ -413,20 +417,21 @@ func (c *Canal) checkBinlogRowFormat() error {
 
 func (c *Canal) prepareSyncer() error {
 	cfg := replication.BinlogSyncerConfig{
-		ServerID:                c.cfg.ServerID,
-		Flavor:                  c.cfg.Flavor,
-		User:                    c.cfg.User,
-		Password:                c.cfg.Password,
-		Charset:                 c.cfg.Charset,
-		HeartbeatPeriod:         c.cfg.HeartbeatPeriod,
-		ReadTimeout:             c.cfg.ReadTimeout,
-		UseDecimal:              c.cfg.UseDecimal,
-		ParseTime:               c.cfg.ParseTime,
-		SemiSyncEnabled:         c.cfg.SemiSyncEnabled,
-		MaxReconnectAttempts:    c.cfg.MaxReconnectAttempts,
-		DisableRetrySync:        c.cfg.DisableRetrySync,
-		TimestampStringLocation: c.cfg.TimestampStringLocation,
-		TLSConfig:               c.cfg.TLSConfig,
+		ServerID:                         c.cfg.ServerID,
+		Flavor:                           c.cfg.Flavor,
+		User:                             c.cfg.User,
+		Password:                         c.cfg.Password,
+		Charset:                          c.cfg.Charset,
+		HeartbeatPeriod:                  c.cfg.HeartbeatPeriod,
+		ReadTimeout:                      c.cfg.ReadTimeout,
+		UseDecimal:                       c.cfg.UseDecimal,
+		ParseTime:                        c.cfg.ParseTime,
+		SemiSyncEnabled:                  c.cfg.SemiSyncEnabled,
+		MaxReconnectAttempts:             c.cfg.MaxReconnectAttempts,
+		DisableRetrySync:                 c.cfg.DisableRetrySync,
+		TimestampStringLocation:          c.cfg.TimestampStringLocation,
+		TLSConfig:                        c.cfg.TLSConfig,
+		WaitTimeBetweenConnectionSeconds: c.cfg.WaitTimeBetweenConnectionSeconds,
 	}
 
 	if strings.Contains(c.cfg.Addr, "/") {

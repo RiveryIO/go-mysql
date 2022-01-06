@@ -3,7 +3,7 @@ package mysql
 import (
 	"encoding/binary"
 
-	"github.com/go-mysql-org/go-mysql/utils"
+	"github.com/RiveryIO/go-mysql-binlog-reader/utils"
 )
 
 type FieldData []byte

@@ -13,7 +13,7 @@ import (
 	"github.com/pingcap/errors"
 	uuid "github.com/satori/go.uuid"
 
-	. "github.com/go-mysql-org/go-mysql/mysql"
+	. "github.com/RiveryIO/go-mysql-binlog-reader/mysql"
 )
 
 const (
@@ -66,6 +66,8 @@ type EventHeader struct {
 	EventSize uint32
 	LogPos    uint32
 	Flags     uint16
+	FileName  string
+	Gtid      GTIDSet
 }
 
 func (h *EventHeader) Decode(data []byte) error {

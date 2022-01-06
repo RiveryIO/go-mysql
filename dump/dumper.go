@@ -8,7 +8,7 @@ import (
 	"os/exec"
 	"strings"
 
-	. "github.com/go-mysql-org/go-mysql/mysql"
+	. "github.com/RiveryIO/go-mysql-binlog-reader/mysql"
 	"github.com/pingcap/errors"
 	"github.com/siddontang/go-log/log"
 )
@@ -238,7 +238,7 @@ func (d *Dumper) Dump(w io.Writer) error {
 		}
 	}
 
-	log.Infof("exec mysqldump with %v", args)
+	log.Debugf("exec mysqldump with %v", args)
 	cmd := exec.Command(d.ExecutionPath, args...)
 
 	cmd.Stderr = d.ErrOut

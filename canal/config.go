@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/BurntSushi/toml"
-	"github.com/go-mysql-org/go-mysql/mysql"
+	"github.com/RiveryIO/go-mysql-binlog-reader/mysql"
 	"github.com/pingcap/errors"
 )
 
@@ -80,6 +80,9 @@ type Config struct {
 	// maximum number of attempts to re-establish a broken connection, zero or negative number means infinite retry.
 	// this configuration will not work if DisableRetrySync is true
 	MaxReconnectAttempts int `toml:"max_reconnect_attempts"`
+
+	// WaitTimeBetweenConnectionSeconds is the time to wait before retrying to connect.
+	WaitTimeBetweenConnectionSeconds time.Duration `toml:"max_wait_time_between_connection_seconds"`
 
 	// whether disable re-sync for broken connection
 	DisableRetrySync bool `toml:"disable_retry_sync"`
