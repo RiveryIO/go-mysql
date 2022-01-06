@@ -3,8 +3,8 @@ package failover
 import (
 	"fmt"
 
-	"github.com/RiveryIO/go-mysql-binlog-reader/client"
-	. "github.com/RiveryIO/go-mysql-binlog-reader/mysql"
+	"github.com/RiveryIO/go-mysql/client"
+	. "github.com/RiveryIO/go-mysql/mysql"
 )
 
 type User struct {

@@ -3,7 +3,7 @@ package server
 import (
 	"testing"
 
-	"github.com/RiveryIO/go-mysql-binlog-reader/mysql"
+	"github.com/RiveryIO/go-mysql/mysql"
 )
 
 func TestReadAuthData(t *testing.T) {

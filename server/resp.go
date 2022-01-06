@@ -3,7 +3,7 @@ package server
 import (
 	"fmt"
 
-	. "github.com/RiveryIO/go-mysql-binlog-reader/mysql"
+	. "github.com/RiveryIO/go-mysql/mysql"
 )
 
 func (c *Conn) writeOK(r *Result) error {

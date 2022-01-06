@@ -8,7 +8,7 @@ import (
 	"os/exec"
 	"strings"
 
-	. "github.com/RiveryIO/go-mysql-binlog-reader/mysql"
+	. "github.com/RiveryIO/go-mysql/mysql"
 	"github.com/pingcap/errors"
 	"github.com/siddontang/go-log/log"
 )

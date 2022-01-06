@@ -7,8 +7,8 @@ import (
 	"encoding/binary"
 	"encoding/pem"
 
-	. "github.com/RiveryIO/go-mysql-binlog-reader/mysql"
-	"github.com/RiveryIO/go-mysql-binlog-reader/utils"
+	. "github.com/RiveryIO/go-mysql/mysql"
+	"github.com/RiveryIO/go-mysql/utils"
 	"github.com/pingcap/errors"
 	"github.com/siddontang/go/hack"
 )

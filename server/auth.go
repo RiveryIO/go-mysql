@@ -9,7 +9,7 @@ import (
 	"crypto/tls"
 	"fmt"
 
-	. "github.com/RiveryIO/go-mysql-binlog-reader/mysql"
+	. "github.com/RiveryIO/go-mysql/mysql"
 	"github.com/pingcap/errors"
 )
 

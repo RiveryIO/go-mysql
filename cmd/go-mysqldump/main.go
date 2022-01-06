@@ -6,7 +6,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/RiveryIO/go-mysql-binlog-reader/dump"
+	"github.com/RiveryIO/go-mysql/dump"
 	"github.com/pingcap/errors"
 )
 

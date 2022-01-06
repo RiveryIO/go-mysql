@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/RiveryIO/go-mysql-binlog-reader/mysql"
-	"github.com/RiveryIO/go-mysql-binlog-reader/test_util/test_keys"
+	"github.com/RiveryIO/go-mysql/mysql"
+	"github.com/RiveryIO/go-mysql/test_util/test_keys"
 	_ "github.com/go-sql-driver/mysql"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"

@@ -5,9 +5,9 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/RiveryIO/go-mysql-binlog-reader/mysql"
-	"github.com/RiveryIO/go-mysql-binlog-reader/replication"
-	"github.com/RiveryIO/go-mysql-binlog-reader/schema"
+	"github.com/RiveryIO/go-mysql/mysql"
+	"github.com/RiveryIO/go-mysql/replication"
+	"github.com/RiveryIO/go-mysql/schema"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	uuid "github.com/satori/go.uuid"

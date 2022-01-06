@@ -1,4 +1,4 @@
-module github.com/RiveryIO/go-mysql-binlog-reader
+module github.com/RiveryIO/go-mysql
 
 go 1.16
 

@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/RiveryIO/go-mysql-binlog-reader/client"
-	"github.com/RiveryIO/go-mysql-binlog-reader/mysql"
+	"github.com/RiveryIO/go-mysql/client"
+	"github.com/RiveryIO/go-mysql/mysql"
 	. "github.com/pingcap/check"
 	uuid "github.com/satori/go.uuid"
 )

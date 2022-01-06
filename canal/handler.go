@@ -1,8 +1,8 @@
 package canal
 
 import (
-	"github.com/RiveryIO/go-mysql-binlog-reader/mysql"
-	"github.com/RiveryIO/go-mysql-binlog-reader/replication"
+	"github.com/RiveryIO/go-mysql/mysql"
+	"github.com/RiveryIO/go-mysql/replication"
 )
 
 type EventHandler interface {

@@ -12,7 +12,7 @@ import (
 
 	"github.com/pingcap/errors"
 
-	"github.com/RiveryIO/go-mysql-binlog-reader/mysql"
+	"github.com/RiveryIO/go-mysql/mysql"
 )
 
 var ErrTableNotExist = errors.New("table is not exist")

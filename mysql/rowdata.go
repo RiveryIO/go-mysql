@@ -3,7 +3,7 @@ package mysql
 import (
 	"strconv"
 
-	"github.com/RiveryIO/go-mysql-binlog-reader/utils"
+	"github.com/RiveryIO/go-mysql/utils"
 	"github.com/pingcap/errors"
 )
 

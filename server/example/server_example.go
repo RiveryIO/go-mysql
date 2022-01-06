@@ -3,9 +3,9 @@ package main
 import (
 	"net"
 
-	"github.com/RiveryIO/go-mysql-binlog-reader/mysql"
-	"github.com/RiveryIO/go-mysql-binlog-reader/server"
-	"github.com/RiveryIO/go-mysql-binlog-reader/test_util/test_keys"
+	"github.com/RiveryIO/go-mysql/mysql"
+	"github.com/RiveryIO/go-mysql/server"
+	"github.com/RiveryIO/go-mysql/test_util/test_keys"
 	"github.com/siddontang/go-log/log"
 
 	"crypto/tls"

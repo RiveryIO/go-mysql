@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"math"
 
-	. "github.com/RiveryIO/go-mysql-binlog-reader/mysql"
+	. "github.com/RiveryIO/go-mysql/mysql"
 	"github.com/pingcap/errors"
 	"github.com/siddontang/go/hack"
 )

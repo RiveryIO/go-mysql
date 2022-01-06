@@ -6,8 +6,8 @@ import (
 	"encoding/binary"
 	"fmt"
 
-	. "github.com/RiveryIO/go-mysql-binlog-reader/mysql"
-	"github.com/RiveryIO/go-mysql-binlog-reader/packet"
+	. "github.com/RiveryIO/go-mysql/mysql"
+	"github.com/RiveryIO/go-mysql/packet"
 	"github.com/pingcap/errors"
 )
 

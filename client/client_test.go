@@ -6,11 +6,11 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/RiveryIO/go-mysql-binlog-reader/test_util/test_keys"
+	"github.com/RiveryIO/go-mysql/test_util/test_keys"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
 
-	"github.com/RiveryIO/go-mysql-binlog-reader/mysql"
+	"github.com/RiveryIO/go-mysql/mysql"
 )
 
 var testHost = flag.String("host", "127.0.0.1", "MySQL server host")

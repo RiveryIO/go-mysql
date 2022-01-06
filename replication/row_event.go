@@ -14,7 +14,7 @@ import (
 	"github.com/siddontang/go-log/log"
 	"github.com/siddontang/go/hack"
 
-	. "github.com/RiveryIO/go-mysql-binlog-reader/mysql"
+	. "github.com/RiveryIO/go-mysql/mysql"
 )
 
 var errMissingTableMapEvent = errors.New("invalid table id, no corresponding table map event")

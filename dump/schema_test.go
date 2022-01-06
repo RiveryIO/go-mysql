@@ -6,7 +6,7 @@ import (
 	"io/ioutil"
 	"os"
 
-	"github.com/RiveryIO/go-mysql-binlog-reader/client"
+	"github.com/RiveryIO/go-mysql/client"
 	. "github.com/pingcap/check"
 )
 

@@ -10,8 +10,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/RiveryIO/go-mysql-binlog-reader/client"
-	. "github.com/RiveryIO/go-mysql-binlog-reader/mysql"
+	"github.com/RiveryIO/go-mysql/client"
+	. "github.com/RiveryIO/go-mysql/mysql"
 	"github.com/pingcap/errors"
 	uuid "github.com/satori/go.uuid"
 	"github.com/siddontang/go-log/log"

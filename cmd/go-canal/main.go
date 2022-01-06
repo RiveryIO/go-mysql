@@ -9,8 +9,8 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/RiveryIO/go-mysql-binlog-reader/canal"
-	"github.com/RiveryIO/go-mysql-binlog-reader/mysql"
+	"github.com/RiveryIO/go-mysql/canal"
+	"github.com/RiveryIO/go-mysql/mysql"
 )
 
 var host = flag.String("host", "127.0.0.1", "MySQL host")

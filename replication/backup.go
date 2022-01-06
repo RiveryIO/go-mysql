@@ -7,7 +7,7 @@ import (
 	"path"
 	"time"
 
-	. "github.com/RiveryIO/go-mysql-binlog-reader/mysql"
+	. "github.com/RiveryIO/go-mysql/mysql"
 	"github.com/pingcap/errors"
 )
 
