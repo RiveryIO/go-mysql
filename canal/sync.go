@@ -248,6 +248,10 @@ func (c *Canal) updateReplicationDelay(ev *replication.BinlogEvent) {
 }
 
 func (c *Canal) handleRowsEvent(e *replication.BinlogEvent) error {
+	if e.Header.EventType == replication.ANONYMOUS_GTID_EVENT {
+		log.Printf("==> Anonymous transaction: %+v\n", e)
+	}
+
 	ev := e.Event.(*replication.RowsEvent)
 
 	// Caveat: table may be altered at runtime.
@@ -266,9 +270,6 @@ func (c *Canal) handleRowsEvent(e *replication.BinlogEvent) error {
 		action = DeleteAction
 	case replication.UPDATE_ROWS_EVENTv1, replication.UPDATE_ROWS_EVENTv2:
 		action = UpdateAction
-	case replication.ANONYMOUS_GTID_EVENT:
-		// Skip anonymous transactions
-		return nil
 	default:
 		return errors.Errorf("%s not supported now", e.Header.EventType)
 	}
