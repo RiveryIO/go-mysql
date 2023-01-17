@@ -248,6 +248,10 @@ func (c *Canal) updateReplicationDelay(ev *replication.BinlogEvent) {
 }
 
 func (c *Canal) handleRowsEvent(e *replication.BinlogEvent) error {
+	if e.Header.EventType == replication.ANONYMOUS_GTID_EVENT {
+		log.Printf("==> Anonymous transaction: %+v\n", e)
+	}
+
 	ev := e.Event.(*replication.RowsEvent)
 
 	// Caveat: table may be altered at runtime.
