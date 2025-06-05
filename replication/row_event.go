@@ -1217,6 +1217,7 @@ var charsetDecoders = map[string]encoding.Encoding{
 	"utf8mb4": unicode.UTF8,
 	"utf16le": unicode.UTF16(unicode.LittleEndian, unicode.UseBOM),
 	"utf16":   unicode.UTF16(unicode.BigEndian, unicode.ExpectBOM),
+	"ascii":   unicode.UTF8,
 
 	// Western European
 	"latin1": charmap.ISO8859_1,
@@ -1306,6 +1307,26 @@ func normalizeSmartQuotes(content []byte) []byte {
 	return content
 }
 
+func supportsSmartQuotes(enc encoding.Encoding) bool {
+	switch enc {
+	// Unicode
+	case unicode.UTF8,
+		unicode.UTF16(unicode.LittleEndian, unicode.UseBOM),
+		unicode.UTF16(unicode.BigEndian, unicode.ExpectBOM),
+		unicode.UTF16(unicode.LittleEndian, unicode.IgnoreBOM), // ucs2 variant
+
+		// Chinese
+		simplifiedchinese.GBK,
+		simplifiedchinese.GB18030,
+
+		// MacRoman
+		charmap.Macintosh:
+		return true
+	}
+
+	return false
+}
+
 func replaceUnsupportedCharacters(data []byte, length int) []byte {
 	if len(data) == 0 {
 		return data
@@ -1313,34 +1334,35 @@ func replaceUnsupportedCharacters(data []byte, length int) []byte {
 
 	var content []byte
 	var prefix []byte
+	var contentLength int
+	var prefixLen int
 
 	if length > 255 {
 		// 2-byte length prefix (LittleEndian)
-		length := int(binary.LittleEndian.Uint16(data[0:2]))
-		if length > len(data)-2 {
-			length = len(data) - 2 // safety fallback
+		prefixLen = 2
+		contentLength = int(binary.LittleEndian.Uint16(data[:2]))
+		if contentLength > len(data)-prefixLen {
+			contentLength = len(data) - prefixLen
 		}
-		content = data[2 : 2+length]
-
-		// Replace unsupported characters
-		content = normalizeSmartQuotes(content)
-
-		// Rebuild 2-byte length prefix
-		newLength := len(content)
-		prefix = make([]byte, 2)
-		binary.LittleEndian.PutUint16(prefix, uint16(newLength))
+		content = data[prefixLen : prefixLen+contentLength]
 	} else {
 		// 1-byte length prefix
-		length := int(data[0])
-		if length > len(data)-1 {
-			length = len(data) - 1
+		prefixLen = 1
+		contentLength = int(data[0])
+		if contentLength > len(data)-prefixLen {
+			contentLength = len(data) - prefixLen
 		}
-		content = data[1 : 1+length]
+		content = data[prefixLen : prefixLen+contentLength]
+	}
 
-		// Replace unsupported characters
-		content = normalizeSmartQuotes(content)
+	// Replace unsupported characters
+	content = normalizeSmartQuotes(content)
 
-		// Rebuild 1-byte length prefix
+	// Rebuild prefix with new length
+	if prefixLen == 2 {
+		prefix = make([]byte, 2)
+		binary.LittleEndian.PutUint16(prefix, uint16(len(content)))
+	} else {
 		prefix = []byte{byte(len(content))}
 	}
 
@@ -1350,7 +1372,7 @@ func replaceUnsupportedCharacters(data []byte, length int) []byte {
 func decodeStringWithEncoder(data []byte, length int, enc encoding.Encoding) (v string, n int) {
 	// Define the Latin1 decoder
 	decoder := enc.NewDecoder()
-	if enc != unicode.UTF8 {
+	if !supportsSmartQuotes(enc) {
 		data = replaceUnsupportedCharacters(data, length)
 	}
 
