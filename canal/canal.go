@@ -86,6 +86,10 @@ func NewCanal(cfg *Config) (*Canal, error) {
 		return nil, errors.Trace(err)
 	}
 
+	if err := c.GetColumnsCharsets(); err != nil {
+		return nil, errors.Trace(err)
+	}
+
 	if err = c.prepareSyncer(); err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -418,6 +422,49 @@ func (c *Canal) checkBinlogRowFormat() error {
 	return nil
 }
 
+func (c *Canal) GenerateCharsetQuery(tableRegex string) string {
+	parts := strings.Split(tableRegex, ".")
+	dbName := parts[0]
+	tableName := parts[1]
+	query := fmt.Sprintf(`
+		SELECT 
+		    ORDINAL_POSITION,
+			CHARACTER_SET_NAME,
+			COLUMN_NAME
+		FROM 
+			information_schema.COLUMNS
+		WHERE 
+			TABLE_SCHEMA = '%s'
+			AND TABLE_NAME = '%s'
+			AND CHARACTER_SET_NAME IS NOT NULL;
+		`, dbName, tableName)
+	return query
+}
+
+func (c *Canal) SetColumnsCharset(tableRegex string, res *mysql.Result) {
+	c.cfg.ColumnCharset[tableRegex] = make(map[int]string)
+	for _, row := range res.Values {
+		columnIndex := row[0].AsInt64()
+		charset := row[1].AsString()
+		columnName := row[2].AsString()
+		c.cfg.ColumnCharset[tableRegex][int(columnIndex)] = string(charset)
+		log.Infof("Column Name: %s, Column: %d, Charset: %s\n", columnName, columnIndex, charset)
+	}
+}
+
+func (c *Canal) GetColumnsCharsets() error {
+	c.cfg.ColumnCharset = make(map[string]map[int]string)
+	for _, tableRegex := range c.cfg.IncludeTableRegex {
+		query := c.GenerateCharsetQuery(tableRegex)
+		res, err := c.Execute(query)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		c.SetColumnsCharset(tableRegex, res)
+	}
+	return nil
+}
+
 func (c *Canal) prepareSyncer() error {
 	cfg := replication.BinlogSyncerConfig{
 		ServerID:                         c.cfg.ServerID,
@@ -425,6 +472,7 @@ func (c *Canal) prepareSyncer() error {
 		User:                             c.cfg.User,
 		Password:                         c.cfg.Password,
 		Charset:                          c.cfg.Charset,
+		ColumnCharset:                    c.cfg.ColumnCharset,
 		HeartbeatPeriod:                  c.cfg.HeartbeatPeriod,
 		ReadTimeout:                      c.cfg.ReadTimeout,
 		UseDecimal:                       c.cfg.UseDecimal,

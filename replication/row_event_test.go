@@ -1288,7 +1288,7 @@ func (_ *testDecodeSuite) BenchmarkUseDecimal(c *C) {
 	c.ResetTimer()
 	for i := 0; i < c.N; i++ {
 		for _, d := range decimalData {
-			_, _, _ = e.decodeValue(d.dumpData, mysql.MYSQL_TYPE_NEWDECIMAL, d.meta)
+			_, _, _ = e.decodeValue(d.dumpData, mysql.MYSQL_TYPE_NEWDECIMAL, "utf8", d.meta)
 		}
 	}
 }
@@ -1298,7 +1298,7 @@ func (_ *testDecodeSuite) BenchmarkNotUseDecimal(c *C) {
 	c.ResetTimer()
 	for i := 0; i < c.N; i++ {
 		for _, d := range decimalData {
-			_, _, _ = e.decodeValue(d.dumpData, mysql.MYSQL_TYPE_NEWDECIMAL, d.meta)
+			_, _, _ = e.decodeValue(d.dumpData, mysql.MYSQL_TYPE_NEWDECIMAL, "utf8", d.meta)
 		}
 	}
 }
@@ -1307,14 +1307,14 @@ func (_ *testDecodeSuite) TestDecimal(c *C) {
 	e := &RowsEvent{useDecimal: true}
 	e2 := &RowsEvent{useDecimal: false}
 	for _, d := range decimalData {
-		v, _, err := e.decodeValue(d.dumpData, mysql.MYSQL_TYPE_NEWDECIMAL, d.meta)
+		v, _, err := e.decodeValue(d.dumpData, mysql.MYSQL_TYPE_NEWDECIMAL, "utf8", d.meta)
 		c.Assert(err, IsNil)
 		// no trailing zero
 		dec, err := decimal.NewFromString(d.num)
 		c.Assert(err, IsNil)
 		c.Assert(dec.Equal(v.(decimal.Decimal)), IsTrue)
 
-		v, _, err = e2.decodeValue(d.dumpData, mysql.MYSQL_TYPE_NEWDECIMAL, d.meta)
+		v, _, err = e2.decodeValue(d.dumpData, mysql.MYSQL_TYPE_NEWDECIMAL, "utf8", d.meta)
 		c.Assert(err, IsNil)
 		c.Assert(v.(string), Equals, d.num)
 	}
@@ -1340,7 +1340,7 @@ func (_ *testDecodeSuite) BenchmarkInt(c *C) {
 	c.ResetTimer()
 	for i := 0; i < c.N; i++ {
 		for _, d := range intData {
-			_, _, _ = e.decodeValue(d, mysql.MYSQL_TYPE_LONG, 0)
+			_, _, _ = e.decodeValue(d, mysql.MYSQL_TYPE_LONG, "utf8", 0)
 		}
 	}
 }
@@ -1350,6 +1350,7 @@ func TestDecodeStringLatin1(t *testing.T) {
 		name     string
 		input    []byte
 		length   int
+		charset  string
 		wantStr  string
 		wantRead int
 	}{
@@ -1357,43 +1358,48 @@ func TestDecodeStringLatin1(t *testing.T) {
 			name:     "Short Latin1 string",
 			input:    append([]byte{5}, []byte{0xe2, 'f', 'g', 'h', 0xe9}...), // 'âfghé'
 			length:   5,
+			charset:  "latin1",
 			wantStr:  "âfghé",
 			wantRead: 6,
 		},
 		{
 			name: "Short Latin1 string with ‘",
 			input: append(
-				append([]byte{5}, []byte{0xe2, 'f', 'h', 0xe9}...),
+				append([]byte{7}, []byte{0xe2, 'f', 'h', 0xe9}...),
 				[]byte("‘")...),
 			length:   5,
 			wantStr:  "âfhé'",
+			charset:  "latin1",
 			wantRead: 6,
 		},
 		{
 			name: "Short Latin1 string with ’",
 			input: append(
-				append([]byte{5}, []byte{0xe2, 'f', 'h', 0xe9}...),
+				append([]byte{7}, []byte{0xe2, 'f', 'h', 0xe9}...),
 				[]byte("’")...),
 			length:   5,
 			wantStr:  "âfhé'",
+			charset:  "latin1",
 			wantRead: 6,
 		},
 		{
 			name: "Short Latin1 string with ”",
 			input: append(
-				append([]byte{5}, []byte{0xe2, 'f', 'h', 0xe9}...),
+				append([]byte{7}, []byte{0xe2, 'f', 'h', 0xe9}...),
 				[]byte("”")...),
 			length:   5,
 			wantStr:  "âfhé\"",
+			charset:  "latin1",
 			wantRead: 6,
 		},
 		{
 			name: "Short Latin1 string with “",
 			input: append(
-				append([]byte{5}, []byte{0xe2, 'f', 'h', 0xe9}...),
+				append([]byte{7}, []byte{0xe2, 'f', 'h', 0xe9}...),
 				[]byte("“")...),
 			length:   5,
 			wantStr:  "âfhé\"",
+			charset:  "latin1",
 			wantRead: 6,
 		},
 		{
@@ -1401,6 +1407,7 @@ func TestDecodeStringLatin1(t *testing.T) {
 			input:    append([]byte{2}, []byte{0xC0, 0xAF}...), // invalid UTF-8, valid Latin1
 			length:   2,
 			wantStr:  "À¯",
+			charset:  "latin1",
 			wantRead: 3,
 		},
 		{
@@ -1415,6 +1422,7 @@ func TestDecodeStringLatin1(t *testing.T) {
 			input:    []byte{1, 0xE9}, // é
 			length:   1,
 			wantStr:  "é",
+			charset:  "latin1",
 			wantRead: 2,
 		},
 		{
@@ -1422,12 +1430,14 @@ func TestDecodeStringLatin1(t *testing.T) {
 			input:    append([]byte{3}, []byte{0xA3, 0xE9, 0xF1}...), // £éñ
 			length:   3,
 			wantStr:  "£éñ",
+			charset:  "latin1",
 			wantRead: 4,
 		},
 		{
 			name:     "Empty string",
 			input:    []byte{0},
 			length:   0,
+			charset:  "latin1",
 			wantStr:  "",
 			wantRead: 1,
 		},
@@ -1435,27 +1445,30 @@ func TestDecodeStringLatin1(t *testing.T) {
 			name: "Long string (>255, 2-byte length)",
 			input: func() []byte {
 				buf := new(bytes.Buffer)
-				binary.Write(buf, binary.LittleEndian, uint16(5))
+				binary.Write(buf, binary.LittleEndian, uint16(6))
 				buf.Write([]byte{0xe2, 'f', 'g', 'h', 0xe9}) // 'âfghé'
 				return buf.Bytes()
 			}(),
 			length:   300,
+			charset:  "latin1",
 			wantStr:  "âfghé",
 			wantRead: 7,
 		},
 		{
 			name:     "Term Date and Retro Term Policy",
-			input:    append([]byte{byte(len("‘30 day â term date’"))}, []byte("‘30 day term date’")...),
+			input:    append([]byte{byte(len("‘30 day term date’"))}, []byte("‘30 day term date’")...),
 			length:   len("‘30 day term date’"),
 			wantStr:  "'30 day term date'",
-			wantRead: 18, // Include the prepended length byte
+			charset:  "latin1",
+			wantRead: 19, // Include the prepended length byte
 		},
 		{
 			name:     "Term Date and Retro Term Policy",
 			input:    append([]byte{byte(len("“30 day term date”"))}, []byte("“30 day term date”")...),
 			length:   len("“30 day term date”"),
 			wantStr:  "\"30 day term date\"",
-			wantRead: 18, // Include the prepended length byte
+			charset:  "latin1",
+			wantRead: 19, // Include the prepended length byte
 		},
 
 		{
@@ -1464,24 +1477,26 @@ func TestDecodeStringLatin1(t *testing.T) {
 				data := []byte{ // Hello' âfghé
 					'H', 'e', 'l', 'l', 'o', ' ', 0x27, ' ', 0xe2, 'f', 'g', 'h', 0xe9,
 				}
-				return append([]byte{12}, data...) // Prepend length byte
+				return append([]byte{13}, data...) // Prepend length byte
 			}(),
 			length:   12,
 			wantStr:  "Hello ' âfghé",
-			wantRead: 15,
+			charset:  "latin1",
+			wantRead: 14,
 		},
 		{
 			name:     "UTF-8 with Latin1 byte after UTF-8 valid chars",
 			input:    append([]byte{7}, []byte{0xe2, ' ', 'H', 'e', 'l', 'l', 'o'}...), // 'Hello â'
 			length:   7,
 			wantStr:  "â Hello",
+			charset:  "latin1",
 			wantRead: 8,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			gotStr, gotRead := decodeStringLatin1(tt.input, tt.length)
+			gotStr, gotRead := decodeStringByCharSet(tt.input, tt.charset, tt.length)
 			if gotStr != tt.wantStr {
 				t.Errorf("decodeStringLatin1() got string = %q, want %q", gotStr, tt.wantStr)
 			}
@@ -1501,14 +1516,14 @@ func TestDecodeByCharSet(t *testing.T) {
 		wantStr string
 	}{
 		{
-			name:    "Valid UTF-8 with UTF-8 charset",
+			name:    "UTF-8 charset",
 			input:   append([]byte{11}, []byte("hello world")...),
 			charset: "utf8",
 			length:  11,
 			wantStr: "hello world",
 		},
 		{
-			name:    "Invalid UTF-8 but charset is latin1",
+			name:    "charset is latin1",
 			input:   append([]byte{3}, []byte{0xe2, 0x28, 0xa1}...), // invalid utf8
 			charset: "latin1",
 			length:  3,
@@ -1519,7 +1534,7 @@ func TestDecodeByCharSet(t *testing.T) {
 			input:   append([]byte{3}, []byte{0xe2, 0x28, 0xa1}...), // invalid utf8
 			charset: "utf8",
 			length:  3,
-			wantStr: "\xe2(\xa1",
+			wantStr: "�(�",
 		},
 		{
 			name:    "Valid UTF-8 and charset latin1",
@@ -1528,11 +1543,53 @@ func TestDecodeByCharSet(t *testing.T) {
 			length:  11,
 			wantStr: "hello world", // because utf8.Valid is true, decodeString should be used
 		},
+		{
+			name:    "Windows-1251 Cyrillic",
+			input:   append([]byte{6}, []byte{0xd0, 0xe0, 0xe1, 0xee, 0xf2, 0x21}...),
+			charset: "cp1251",
+			length:  6,
+			wantStr: "Работ!",
+		},
+		{
+			name:    "Greek ISO-8859-7",
+			input:   append([]byte{5}, []byte{0xe3, 0xe5, 0xe9, 0xe1, 0x21}...),
+			charset: "greek",
+			length:  5,
+			wantStr: "γεια!",
+		},
+		{
+			name:    "Hebrew ISO-8859-8",
+			input:   append([]byte{4}, []byte{0xe9, 0xf9, 0xe8, 0x21}...),
+			charset: "hebrew",
+			length:  4,
+			wantStr: "ישט!",
+		},
+		{
+			name:    "Arabic Windows-1256",
+			input:   append([]byte{3}, []byte{0xe3, 0xe1, 0x21}...),
+			charset: "cp1256",
+			length:  3,
+			wantStr: "مل!",
+		},
+		{
+			name:    "Simplified Chinese GBK",
+			input:   append([]byte{4}, []byte{0xc4, 0xe3, 0xba, 0xc3}...),
+			charset: "gbk",
+			length:  4,
+			wantStr: "你好",
+		},
+		{
+			name:    "Traditional Chinese Big5",
+			input:   append([]byte{4}, []byte{0xa7, 0x41, 0xa6, 0x6e}...),
+			charset: "big5",
+			length:  4,
+			wantStr: "你好",
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			gotStr, _ := decodeByCharSet(tt.input, tt.charset, tt.length)
+			gotStr, _ := decodeStringByCharSet(tt.input, tt.charset, tt.length)
 			if gotStr != tt.wantStr {
 				t.Errorf("decodeByCharSet() = %q, want %q", gotStr, tt.wantStr)
 			}

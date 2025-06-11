@@ -5,28 +5,32 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"fmt"
+	. "github.com/go-mysql-org/go-mysql/mysql"
+	"github.com/pingcap/errors"
+	"github.com/shopspring/decimal"
+	"github.com/siddontang/go-log/log"
+	"github.com/siddontang/go/hack"
+	"golang.org/x/text/encoding"
 	"golang.org/x/text/encoding/charmap"
+	"golang.org/x/text/encoding/japanese"
+	"golang.org/x/text/encoding/korean"
+	"golang.org/x/text/encoding/simplifiedchinese"
+	"golang.org/x/text/encoding/traditionalchinese"
+	"golang.org/x/text/encoding/unicode"
 	"golang.org/x/text/transform"
 	"io"
 	"strconv"
 	"strings"
 	"time"
-	"unicode/utf8"
-
-	"github.com/pingcap/errors"
-	"github.com/shopspring/decimal"
-	"github.com/siddontang/go-log/log"
-	"github.com/siddontang/go/hack"
-
-	. "github.com/go-mysql-org/go-mysql/mysql"
 )
 
 var errMissingTableMapEvent = errors.New("invalid table id, no corresponding table map event")
 
 type TableMapEvent struct {
-	flavor      string
-	tableIDSize int
-	charset     string
+	flavor          string
+	tableIDSize     int
+	charset         string
+	columnsCharsets map[string]map[int]string
 
 	TableID uint64
 
@@ -976,8 +980,12 @@ func (e *RowsEvent) decodeRows(data []byte, table *TableMapEvent, bitmap []byte)
 			row[i] = nil
 			continue
 		}
-
-		row[i], n, err = e.decodeValue(data[pos:], table.ColumnType[i], table.ColumnMeta[i])
+		tableRegex := fmt.Sprintf("%s.%s", table.Schema, table.Table)
+		charset, exists := table.columnsCharsets[tableRegex][i+1]
+		if !exists {
+			charset = "utf8"
+		}
+		row[i], n, err = e.decodeValue(data[pos:], table.ColumnType[i], charset, table.ColumnMeta[i])
 
 		if err != nil {
 			return 0, err
@@ -1006,7 +1014,7 @@ func (e *RowsEvent) parseFracTime(t interface{}) interface{} {
 }
 
 // see mysql sql/log_event.cc log_event_print_value
-func (e *RowsEvent) decodeValue(data []byte, tp byte, meta uint16) (v interface{}, n int, err error) {
+func (e *RowsEvent) decodeValue(data []byte, tp byte, charset string, meta uint16) (v interface{}, n int, err error) {
 	var length int = 0
 
 	if tp == MYSQL_TYPE_STRING {
@@ -1153,9 +1161,9 @@ func (e *RowsEvent) decodeValue(data []byte, tp byte, meta uint16) (v interface{
 	case MYSQL_TYPE_VARCHAR,
 		MYSQL_TYPE_VAR_STRING:
 		length = int(meta)
-		v, n = decodeByCharSet(data, e.Table.charset, length)
+		v, n = decodeStringByCharSet(data, charset, length)
 	case MYSQL_TYPE_STRING:
-		v, n = decodeByCharSet(data, e.Table.charset, length)
+		v, n = decodeStringByCharSet(data, charset, length)
 	case MYSQL_TYPE_JSON:
 		// Refer: https://github.com/shyiko/mysql-binlog-connector-java/blob/master/src/main/java/com/github/shyiko/mysql/binlog/event/deserialization/AbstractRowsEventDataDeserializer.java#L404
 		length = int(FixedLengthInt(data[0:meta]))
@@ -1194,15 +1202,85 @@ func convertToString(s interface{}) (string, bool) {
 	}
 }
 
-func decodeByCharSet(data []byte, charset string, length int) (v string, n int) {
-	if !utf8.Valid(data) {
-		if charset == "latin1" {
-			return decodeStringLatin1(data, length)
-		} else {
-			fmt.Printf("Data is not in utf8 or latin1")
-		}
+func decodeStringByCharSet(data []byte, charset string, length int) (v string, n int) {
+	enc, err := getDecoderByCharsetName(charset)
+	if err != nil {
+		log.Errorf(err.Error())
+		return decodeString(data, length)
 	}
-	return decodeString(data, length)
+	return decodeStringWithEncoder(data, length, enc)
+}
+
+var charsetDecoders = map[string]encoding.Encoding{
+	// Unicode
+	"utf8":    unicode.UTF8,
+	"utf8mb4": unicode.UTF8,
+	"utf16le": unicode.UTF16(unicode.LittleEndian, unicode.UseBOM),
+	"utf16":   unicode.UTF16(unicode.BigEndian, unicode.ExpectBOM),
+	"ascii":   unicode.UTF8,
+
+	// Western European
+	"latin1": charmap.ISO8859_1,
+	"latin2": charmap.ISO8859_2,
+	"latin5": charmap.ISO8859_9,
+	"latin7": charmap.ISO8859_13,
+
+	// Windows encodings
+	"cp1250": charmap.Windows1250,
+	"cp1251": charmap.Windows1251,
+	"cp1256": charmap.Windows1256,
+	"cp1257": charmap.Windows1257,
+
+	// Cyrillic
+	"koi8r": charmap.KOI8R,
+	"koi8u": charmap.KOI8U,
+	"cp866": charmap.CodePage866,
+
+	// Greek
+	"greek": charmap.ISO8859_7,
+
+	// Hebrew
+	"hebrew": charmap.ISO8859_8,
+
+	// Arabic
+	"arabic": charmap.ISO8859_6,
+
+	// Thai
+	"tis620": charmap.Windows874,
+
+	// Simplified Chinese
+	"gbk":     simplifiedchinese.GBK,
+	"gb2312":  simplifiedchinese.GBK,
+	"gb18030": simplifiedchinese.GB18030,
+
+	// Traditional Chinese
+	"big5": traditionalchinese.Big5,
+
+	// Japanese
+	"sjis":      japanese.ShiftJIS,
+	"shift_jis": japanese.ShiftJIS,
+	"eucjp":     japanese.EUCJP,
+
+	// Korean
+	"euckr": korean.EUCKR,
+
+	// DOS/mac
+	"cp850":    charmap.CodePage850,
+	"cp852":    charmap.CodePage852,
+	"macroman": charmap.Macintosh,
+
+	// Other/special cases
+	"ucs2":   unicode.UTF16(unicode.LittleEndian, unicode.IgnoreBOM),
+	"binary": nil,
+}
+
+func getDecoderByCharsetName(name string) (encoding.Encoding, error) {
+	name = strings.ToLower(name)
+	enc, ok := charsetDecoders[name]
+	if !ok {
+		return nil, fmt.Errorf("unsupported charset: %s", name)
+	}
+	return enc, nil
 }
 
 func decodeString(data []byte, length int) (v string, n int) {
@@ -1221,27 +1299,95 @@ func decodeString(data []byte, length int) (v string, n int) {
 }
 
 // Replaces smart quotes with ASCII equivalents
-func replaceUnsupportedLatin1Characters(s string) string {
-	s = string(bytes.ReplaceAll([]byte(s), []byte("‘"), []byte("'")))
-	s = string(bytes.ReplaceAll([]byte(s), []byte("’"), []byte("'")))
-	s = string(bytes.ReplaceAll([]byte(s), []byte("“"), []byte("\"")))
-	s = string(bytes.ReplaceAll([]byte(s), []byte("”"), []byte("\"")))
-	return string(s)
+func normalizeSmartQuotes(content []byte) []byte {
+	content = bytes.ReplaceAll(content, []byte("‘"), []byte("'"))
+	content = bytes.ReplaceAll(content, []byte("’"), []byte("'"))
+	content = bytes.ReplaceAll(content, []byte("“"), []byte("\""))
+	content = bytes.ReplaceAll(content, []byte("”"), []byte("\""))
+	return content
 }
 
-func decodeStringLatin1(data []byte, length int) (v string, n int) {
-	decoder := charmap.ISO8859_1.NewDecoder()
+func supportsSmartQuotes(enc encoding.Encoding) bool {
+	switch enc {
+	// Unicode
+	case unicode.UTF8,
+		unicode.UTF16(unicode.LittleEndian, unicode.UseBOM),
+		unicode.UTF16(unicode.BigEndian, unicode.ExpectBOM),
+		unicode.UTF16(unicode.LittleEndian, unicode.IgnoreBOM), // ucs2 variant
+
+		// Chinese
+		simplifiedchinese.GBK,
+		simplifiedchinese.GB18030,
+
+		// MacRoman
+		charmap.Macintosh:
+		return true
+	}
+
+	return false
+}
+
+func replaceUnsupportedCharacters(data []byte, length int) []byte {
+	if len(data) == 0 {
+		return data
+	}
+
+	var content []byte
+	var prefix []byte
+	var contentLength int
+	var prefixLen int
+
+	if length > 255 {
+		// 2-byte length prefix (LittleEndian)
+		prefixLen = 2
+		contentLength = int(binary.LittleEndian.Uint16(data[:2]))
+		if contentLength > len(data)-prefixLen {
+			contentLength = len(data) - prefixLen
+		}
+		content = data[prefixLen : prefixLen+contentLength]
+	} else {
+		// 1-byte length prefix
+		prefixLen = 1
+		contentLength = int(data[0])
+		if contentLength > len(data)-prefixLen {
+			contentLength = len(data) - prefixLen
+		}
+		content = data[prefixLen : prefixLen+contentLength]
+	}
+
+	// Replace unsupported characters
+	content = normalizeSmartQuotes(content)
+
+	// Rebuild prefix with new length
+	if prefixLen == 2 {
+		prefix = make([]byte, 2)
+		binary.LittleEndian.PutUint16(prefix, uint16(len(content)))
+	} else {
+		prefix = []byte{byte(len(content))}
+	}
+
+	return append(prefix, content...)
+}
+
+func decodeStringWithEncoder(data []byte, length int, enc encoding.Encoding) (v string, n int) {
+	// Define the Latin1 decoder
+	decoder := enc.NewDecoder()
+	if !supportsSmartQuotes(enc) {
+		data = replaceUnsupportedCharacters(data, length)
+	}
 
 	if length < 256 {
+		// If the length is smaller than 256, extract the length from the first byte
 		length = int(data[0])
 		n = length + 1
 		decodedBytes, _, _ := transform.Bytes(decoder, data[1:n])
-		v = replaceUnsupportedLatin1Characters(string(decodedBytes))
+		v = string(decodedBytes)
 	} else {
+		// If the length is larger, extract it using LittleEndian
 		length = int(binary.LittleEndian.Uint16(data[0:]))
 		n = length + 2
 		decodedBytes, _, _ := transform.Bytes(decoder, data[2:n])
-		v = replaceUnsupportedLatin1Characters(string(decodedBytes))
+		v = string(decodedBytes)
 	}
 
 	return
