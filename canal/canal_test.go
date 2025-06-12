@@ -3,6 +3,7 @@ package canal
 import (
 	"flag"
 	"fmt"
+	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/stretchr/testify/assert"
 	"strings"
 	"testing"
@@ -421,7 +422,7 @@ func TestGenerateCharsetQuery(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		actual := c.GenerateCharsetQuery(tt.tableRegex)
+		actual, _ := c.GenerateCharsetQuery()
 		assert.Equal(t, normalizeSQL(tt.expected), normalizeSQL(actual))
 	}
 }
@@ -438,25 +439,34 @@ func TestSetColumnsCharset(t *testing.T) {
 		},
 	}
 
-	row1 := []mysql.FieldValue{
-		{Type: mysql.FieldValueTypeFloat, Str: []byte("1")},       // column index
-		{Type: mysql.FieldValueTypeString, Str: []byte("latin1")}, // charset
-		{Type: mysql.FieldValueTypeString, Str: []byte("col1")},   // column name
-	}
+	db, mock, err := sqlmock.New()
+	assert.NoError(t, err)
+	defer db.Close()
 
-	result := &mysql.Result{
-		Resultset: &mysql.Resultset{
-			Values: [][]mysql.FieldValue{row1},
-		},
-	}
+	// Prepare mock rows
+	rows := sqlmock.NewRows([]string{"ORDINAL_POSITION", "CHARACTER_SET_NAME", "COLUMN_NAME"}).
+		AddRow(1, "latin1", "col1")
+
+	rows.AddRow(1, "latin1", "col1")
+	rows.AddRow(2, "latin2", "col2")
+	rows.AddRow(3, "latin3", "col3")
+
+	mock.ExpectQuery("SELECT").WillReturnRows(rows)
+
+	sqlRows, err := db.Query("SELECT something")
+	assert.NoError(t, err)
+	defer sqlRows.Close()
 
 	// Act
 	tableRegex := "testdb.testtable"
-	c.SetColumnsCharset(tableRegex, result)
+	err = c.setColumnsCharsetFromRows(tableRegex, sqlRows)
+	assert.NoError(t, err)
 
 	// Assert
 	expected := map[int]string{
-		0: "latin1",
+		1: "latin1",
+		2: "latin2",
+		3: "latin3",
 	}
 	assert.Equal(t, expected, c.cfg.ColumnCharset[tableRegex])
 }

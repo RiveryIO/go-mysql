@@ -4,6 +4,7 @@ go 1.16
 
 require (
 	github.com/BurntSushi/toml v0.3.1
+	github.com/DATA-DOG/go-sqlmock v1.5.2
 	github.com/go-sql-driver/mysql v1.5.0
 	github.com/jmoiron/sqlx v1.3.3
 	github.com/pingcap/check v0.0.0-20190102082844-67f458068fc8
