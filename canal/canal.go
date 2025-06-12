@@ -434,16 +434,7 @@ func isSafeIdentifier(s string) bool {
 	return len(s) > 0
 }
 
-func (c *Canal) GenerateCharsetQuery(tableRegex string) (string, error) {
-	parts := strings.Split(tableRegex, ".")
-	if len(parts) != 2 {
-		return "", fmt.Errorf("invalid tableRegex format, expected db.table")
-	}
-	dbName := parts[0]
-	tableName := parts[1]
-	if !isSafeIdentifier(dbName) || !isSafeIdentifier(tableName) {
-		return "", fmt.Errorf("invalid characters in db or table name")
-	}
+func (c *Canal) GenerateCharsetQuery() (string, error) {
 	query := `
 		SELECT 
 		    ORDINAL_POSITION,
@@ -479,7 +470,16 @@ func (c *Canal) setColumnsCharsetFromRows(tableRegex string, rows *sql.Rows) err
 func (c *Canal) GetColumnsCharsets() error {
 	c.cfg.ColumnCharset = make(map[string]map[int]string)
 	for _, tableRegex := range c.cfg.IncludeTableRegex {
-		query, err := c.GenerateCharsetQuery(tableRegex)
+		parts := strings.Split(tableRegex, ".")
+		if len(parts) != 2 {
+			return fmt.Errorf("invalid tableRegex format, expected db.table")
+		}
+		dbName := parts[0]
+		tableName := parts[1]
+		if !isSafeIdentifier(dbName) || !isSafeIdentifier(tableName) {
+			return fmt.Errorf("invalid characters in db or table name")
+		}
+		query, err := c.GenerateCharsetQuery()
 		if err != nil {
 			return err
 		}
@@ -488,7 +488,7 @@ func (c *Canal) GetColumnsCharsets() error {
 		if err != nil {
 			return err
 		}
-		rows, err := db.QueryContext(c.ctx, query)
+		rows, err := db.QueryContext(c.ctx, query, dbName, tableName)
 		if err != nil {
 			return err
 		}
