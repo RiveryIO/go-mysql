@@ -2,6 +2,7 @@ package canal
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"io/ioutil"
 	"os"
@@ -11,6 +12,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"unicode"
 
 	"github.com/go-mysql-org/go-mysql/client"
 	"github.com/go-mysql-org/go-mysql/dump"
@@ -422,11 +424,26 @@ func (c *Canal) checkBinlogRowFormat() error {
 	return nil
 }
 
-func (c *Canal) GenerateCharsetQuery(tableRegex string) string {
+func isSafeIdentifier(s string) bool {
+	for _, r := range s {
+		if !(unicode.IsLetter(r) || unicode.IsDigit(r) || r == '_') {
+			return false
+		}
+	}
+	return len(s) > 0
+}
+
+func (c *Canal) GenerateCharsetQuery(tableRegex string) (string, error) {
 	parts := strings.Split(tableRegex, ".")
+	if len(parts) != 2 {
+		return "", fmt.Errorf("invalid tableRegex format, expected db.table")
+	}
 	dbName := parts[0]
 	tableName := parts[1]
-	query := fmt.Sprintf(`
+	if !isSafeIdentifier(dbName) || !isSafeIdentifier(tableName) {
+		return "", fmt.Errorf("invalid characters in db or table name")
+	}
+	query := `
 		SELECT 
 		    ORDINAL_POSITION,
 			CHARACTER_SET_NAME,
@@ -434,33 +451,50 @@ func (c *Canal) GenerateCharsetQuery(tableRegex string) string {
 		FROM 
 			information_schema.COLUMNS
 		WHERE 
-			TABLE_SCHEMA = '%s'
-			AND TABLE_NAME = '%s'
+			TABLE_SCHEMA = ?
+			AND TABLE_NAME = ?
 			AND CHARACTER_SET_NAME IS NOT NULL;
-		`, dbName, tableName)
-	return query
+		`
+
+	return query, nil
+
 }
 
-func (c *Canal) SetColumnsCharset(tableRegex string, res *mysql.Result) {
+func (c *Canal) setColumnsCharsetFromRows(tableRegex string, rows *sql.Rows) error {
 	c.cfg.ColumnCharset[tableRegex] = make(map[int]string)
-	for _, row := range res.Values {
-		columnIndex := row[0].AsInt64()
-		charset := row[1].AsString()
-		columnName := row[2].AsString()
-		c.cfg.ColumnCharset[tableRegex][int(columnIndex)] = string(charset)
-		log.Infof("Column Name: %s, Column: %d, Charset: %s\n", columnName, columnIndex, charset)
+	for rows.Next() {
+		var ordinal int
+		var charset, columnName string
+		if err := rows.Scan(&ordinal, &charset, &columnName); err != nil {
+			return errors.Annotate(err, "failed to scan charset row")
+		}
+		c.cfg.ColumnCharset[tableRegex][ordinal] = charset
+		log.Infof("Column Name: %s, Ordinal: %d, Charset: %s", columnName, ordinal, charset)
 	}
+
+	return rows.Err()
 }
 
 func (c *Canal) GetColumnsCharsets() error {
 	c.cfg.ColumnCharset = make(map[string]map[int]string)
 	for _, tableRegex := range c.cfg.IncludeTableRegex {
-		query := c.GenerateCharsetQuery(tableRegex)
-		res, err := c.Execute(query)
+		query, err := c.GenerateCharsetQuery(tableRegex)
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
-		c.SetColumnsCharset(tableRegex, res)
+		db, err := sql.Open("mysql", fmt.Sprintf("%s:%s@tcp(%s)/information_schema",
+			c.cfg.User, c.cfg.Password, c.cfg.Addr))
+		if err != nil {
+			return err
+		}
+		rows, err := db.QueryContext(c.ctx, query)
+		if err != nil {
+			return err
+		}
+		err = c.setColumnsCharsetFromRows(tableRegex, rows)
+		if err != nil {
+			return err
+		}
 	}
 	return nil
 }
