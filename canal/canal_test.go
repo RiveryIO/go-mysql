@@ -459,7 +459,8 @@ func TestSetColumnsCharset(t *testing.T) {
 
 	// Act
 	tableRegex := "testdb.testtable"
-	c.setColumnsCharsetFromRows(tableRegex, sqlRows)
+	err = c.setColumnsCharsetFromRows(tableRegex, sqlRows)
+	assert.NoError(t, err)
 
 	// Assert
 	expected := map[int]string{
