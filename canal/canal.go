@@ -490,7 +490,13 @@ func (c *Canal) GetColumnsCharsets() error {
 		}
 		rows, err := db.QueryContext(c.ctx, query, dbName, tableName)
 		if err != nil {
-			return err
+			return fmt.Errorf("error occurred while executing query: %s on db: %s on table: %s. "+
+				"error: %v", query, dbName, tableName, errors.Trace(err))
+
+		}
+		err = db.Close()
+		if err != nil {
+			return fmt.Errorf("error occurred while closing db connection %v", errors.Trace(err))
 		}
 		err = c.setColumnsCharsetFromRows(tableRegex, rows)
 		if err != nil {
