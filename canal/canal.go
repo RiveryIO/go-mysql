@@ -19,7 +19,7 @@ import (
 	"github.com/go-mysql-org/go-mysql/mysql"
 	"github.com/go-mysql-org/go-mysql/replication"
 	"github.com/go-mysql-org/go-mysql/schema"
-	_ "github.com/go-sql-driver/mysql"
+	driverMysql "github.com/go-sql-driver/mysql"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser"
 	"github.com/siddontang/go-log/log"
@@ -469,40 +469,53 @@ func (c *Canal) setColumnsCharsetFromRows(tableRegex string, rows *sql.Rows) err
 
 func (c *Canal) GetColumnsCharsets() error {
 	c.cfg.ColumnCharset = make(map[string]map[int]string)
+
+	var dsn string
+	if c.cfg.TLSConfig != nil {
+		if err := driverMysql.RegisterTLSConfig("custom", c.cfg.TLSConfig); err != nil {
+			return fmt.Errorf("failed to register TLS config: %w", err)
+		}
+		dsn = fmt.Sprintf("%s:%s@tcp(%s)/information_schema?tls=custom", c.cfg.User, c.cfg.Password, c.cfg.Addr)
+	} else {
+		dsn = fmt.Sprintf("%s:%s@tcp(%s)/information_schema", c.cfg.User, c.cfg.Password, c.cfg.Addr)
+	}
+	db, err := sql.Open("mysql", dsn)
+	if err != nil {
+		return fmt.Errorf("failed to open DB connection: %w", err)
+	}
+	defer db.Close()
+
 	for _, tableRegex := range c.cfg.IncludeTableRegex {
 		parts := strings.Split(tableRegex, ".")
 		if len(parts) != 2 {
 			return fmt.Errorf("invalid tableRegex format, expected db.table")
 		}
-		dbName := parts[0]
-		tableName := parts[1]
+		dbName, tableName := parts[0], parts[1]
+
 		if !isSafeIdentifier(dbName) || !isSafeIdentifier(tableName) {
-			return fmt.Errorf("invalid characters in db or table name")
+			return fmt.Errorf("invalid characters in db or table name: %s.%s", dbName, tableName)
 		}
+
 		query, err := c.GenerateCharsetQuery()
 		if err != nil {
-			return err
+			return fmt.Errorf("failed to generate charset query: %w", err)
 		}
-		db, err := sql.Open("mysql", fmt.Sprintf("%s:%s@tcp(%s)/information_schema",
-			c.cfg.User, c.cfg.Password, c.cfg.Addr))
-		if err != nil {
-			return err
-		}
+
 		rows, err := db.QueryContext(c.ctx, query, dbName, tableName)
 		if err != nil {
-			return fmt.Errorf("error occurred while executing query: %s on db: %s on table: %s. "+
-				"error: %v", query, dbName, tableName, errors.Trace(err))
+			return fmt.Errorf("error occurred while executing query: %s on db: %s on table: %s. error: %v",
+				query, dbName, tableName, errors.Trace(err))
+		}
 
-		}
-		err = db.Close()
-		if err != nil {
-			return fmt.Errorf("error occurred while closing db connection %v", errors.Trace(err))
-		}
-		err = c.setColumnsCharsetFromRows(tableRegex, rows)
-		if err != nil {
-			return err
-		}
+		// Ensure rows are closed after processing
+		func() {
+			defer rows.Close()
+			if err := c.setColumnsCharsetFromRows(tableRegex, rows); err != nil {
+				panic(fmt.Errorf("failed to set charset from rows: %w", err))
+			}
+		}()
 	}
+
 	return nil
 }
 
