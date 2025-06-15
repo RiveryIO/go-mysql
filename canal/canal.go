@@ -496,7 +496,7 @@ func (c *Canal) GetColumnsCharsets() error {
 		}
 		err = db.Close()
 		if err != nil {
-			return fmt.Errorf("error ocurred while closing db connection %v", errors.Trace(err))
+			return fmt.Errorf("error occurred while closing db connection %v", errors.Trace(err))
 		}
 		err = c.setColumnsCharsetFromRows(tableRegex, rows)
 		if err != nil {
