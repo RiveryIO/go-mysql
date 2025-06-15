@@ -470,13 +470,15 @@ func (c *Canal) setColumnsCharsetFromRows(tableRegex string, rows *sql.Rows) err
 func (c *Canal) GetColumnsCharsets() error {
 	c.cfg.ColumnCharset = make(map[string]map[int]string)
 
-	// Register TLS config if secure transport is required
-	if err := driverMysql.RegisterTLSConfig("custom", c.cfg.TLSConfig); err != nil {
-		return fmt.Errorf("failed to register TLS config: %w", err)
+	var dsn string
+	if c.cfg.TLSConfig != nil {
+		if err := driverMysql.RegisterTLSConfig("custom", c.cfg.TLSConfig); err != nil {
+			return fmt.Errorf("failed to register TLS config: %w", err)
+		}
+		dsn = fmt.Sprintf("%s:%s@tcp(%s)/information_schema?tls=custom", c.cfg.User, c.cfg.Password, c.cfg.Addr)
+	} else {
+		dsn = fmt.Sprintf("%s:%s@tcp(%s)/information_schema", c.cfg.User, c.cfg.Password, c.cfg.Addr)
 	}
-
-	// Use information_schema implicitly
-	dsn := fmt.Sprintf("%s:%s@tcp(%s)/?tls=custom", c.cfg.User, c.cfg.Password, c.cfg.Addr)
 	db, err := sql.Open("mysql", dsn)
 	if err != nil {
 		return fmt.Errorf("failed to open DB connection: %w", err)
