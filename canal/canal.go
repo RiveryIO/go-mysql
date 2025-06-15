@@ -2,8 +2,6 @@ package canal
 
 import (
 	"context"
-	"crypto/tls"
-	"crypto/x509"
 	"database/sql"
 	"fmt"
 	"io/ioutil"
@@ -469,25 +467,11 @@ func (c *Canal) setColumnsCharsetFromRows(tableRegex string, rows *sql.Rows) err
 	return rows.Err()
 }
 
-func registerMySQLTLSConfig() error {
-	rootCertPool, err := x509.SystemCertPool()
-	if err != nil {
-		return fmt.Errorf("failed to load system cert pool: %w", err)
-	}
-
-	tlsConfig := &tls.Config{
-		RootCAs: rootCertPool,
-		// In production, add ServerName or client certs if needed
-	}
-
-	return driverMysql.RegisterTLSConfig("custom", tlsConfig)
-}
-
 func (c *Canal) GetColumnsCharsets() error {
 	c.cfg.ColumnCharset = make(map[string]map[int]string)
 
 	// Register TLS config if secure transport is required
-	if err := registerMySQLTLSConfig(); err != nil {
+	if err := driverMysql.RegisterTLSConfig("custom", c.cfg.TLSConfig); err != nil {
 		return fmt.Errorf("failed to register TLS config: %w", err)
 	}
 
