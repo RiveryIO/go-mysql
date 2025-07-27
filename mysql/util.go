@@ -176,11 +176,10 @@ func PutLengthEncodedInt(n uint64) []byte {
 	case n <= 0xffffff:
 		return []byte{0xfd, byte(n), byte(n >> 8), byte(n >> 16)}
 
-	case n <= 0xffffffffffffffff:
+	default:
 		return []byte{0xfe, byte(n), byte(n >> 8), byte(n >> 16), byte(n >> 24),
 			byte(n >> 32), byte(n >> 40), byte(n >> 48), byte(n >> 56)}
 	}
-	return nil
 }
 
 // LengthEncodedString returns the string read as a bytes slice, whether the value is NULL,
@@ -397,7 +396,7 @@ func init() {
 	}
 	for i := range EncodeMap {
 		if to, ok := encodeRef[byte(i)]; ok {
-			EncodeMap[byte(i)] = to
+			EncodeMap[i] = to
 		}
 	}
 }
