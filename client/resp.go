@@ -336,15 +336,16 @@ func (c *Conn) readResultsetStreaming(data []byte, binary bool, result *Result, 
 	return nil
 }
 
-func (c *Conn) readResultColumns(result *Result) (err error) {
+func (c *Conn) readResultColumns(result *Result) error {
 	var i int = 0
 	var data []byte
+	var err error
 
 	for {
 		rawPkgLen := len(result.RawPkg)
 		result.RawPkg, err = c.ReadPacketReuseMem(result.RawPkg)
 		if err != nil {
-			return
+			return err
 		}
 		data = result.RawPkg[rawPkgLen:]
 
@@ -361,7 +362,7 @@ func (c *Conn) readResultColumns(result *Result) (err error) {
 				err = ErrMalformPacket
 			}
 
-			return
+			return err
 		}
 
 		if result.Fields[i] == nil {
@@ -369,7 +370,7 @@ func (c *Conn) readResultColumns(result *Result) (err error) {
 		}
 		err = result.Fields[i].Parse(data)
 		if err != nil {
-			return
+			return err
 		}
 
 		result.FieldNames[hack.String(result.Fields[i].Name)] = i
@@ -378,14 +379,15 @@ func (c *Conn) readResultColumns(result *Result) (err error) {
 	}
 }
 
-func (c *Conn) readResultRows(result *Result, isBinary bool) (err error) {
+func (c *Conn) readResultRows(result *Result, isBinary bool) error {
 	var data []byte
+	var err error
 
 	for {
 		rawPkgLen := len(result.RawPkg)
 		result.RawPkg, err = c.ReadPacketReuseMem(result.RawPkg)
 		if err != nil {
-			return
+			return err
 		}
 		data = result.RawPkg[rawPkgLen:]
 
@@ -425,16 +427,17 @@ func (c *Conn) readResultRows(result *Result, isBinary bool) (err error) {
 	return nil
 }
 
-func (c *Conn) readResultRowsStreaming(result *Result, isBinary bool, perRowCb SelectPerRowCallback) (err error) {
+func (c *Conn) readResultRowsStreaming(result *Result, isBinary bool, perRowCb SelectPerRowCallback) error {
 	var (
 		data []byte
 		row  []FieldValue
+		err  error
 	)
 
 	for {
 		data, err = c.ReadPacketReuseMem(data[:0])
 		if err != nil {
-			return
+			return err
 		}
 
 		// EOF Packet
