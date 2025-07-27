@@ -1585,6 +1585,20 @@ func TestDecodeByCharSet(t *testing.T) {
 			length:  4,
 			wantStr: "你好",
 		},
+		{
+			name:    "Unknown charset fallback",
+			input:   append([]byte{5}, []byte("abcde")...),
+			charset: "unknown_charset",
+			length:  5,
+			wantStr: "abcde", // fallback to decodeString
+		},
+		{
+			name:    "Known but unsupported charset (returns nil decoder)",
+			input:   append([]byte{5}, []byte("abcde")...),
+			charset: "utf32",
+			length:  5,
+			wantStr: "abcde", // fallback to decodeString
+		},
 	}
 
 	for _, tt := range tests {
