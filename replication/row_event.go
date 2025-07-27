@@ -1267,14 +1267,14 @@ var charsetDecoders = map[string]encoding.Encoding{
 	"sjis":      japanese.ShiftJIS,
 	"shift_jis": japanese.ShiftJIS,
 	"eucjp":     japanese.EUCJP,
-	"ujis":      japanese.EUCJP,    // MySQL alias for EUC-JP
-	"cp932":     japanese.ShiftJIS, // Microsoft variant of Shift-JIS
-	"eucjpms":   nil,               // Microsoft extension to EUC-JP (no native Go support)
+	"ujis":      japanese.EUCJP,
+	"cp932":     japanese.ShiftJIS,
+	"eucjpms":   nil, // Microsoft extension to EUC-JP (no native Go support)
 
 	// Korean
 	"euckr": korean.EUCKR,
 
-	// DOS/Mac legacy
+	// DOS/mac
 	"cp850":    charmap.CodePage850,
 	"cp852":    charmap.CodePage852,
 	"macroman": charmap.Macintosh,
