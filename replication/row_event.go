@@ -1208,15 +1208,22 @@ func decodeStringByCharSet(data []byte, charset string, length int) (v string, n
 		log.Errorf(err.Error())
 		return decodeString(data, length)
 	}
+	if enc == nil {
+		log.Warnf("Falling back to default decoding for charset: %s", charset)
+		return decodeString(data, length)
+	}
 	return decodeStringWithEncoder(data, length, enc)
 }
 
 var charsetDecoders = map[string]encoding.Encoding{
 	// Unicode
 	"utf8":    unicode.UTF8,
+	"utf8mb3": unicode.UTF8,
 	"utf8mb4": unicode.UTF8,
 	"utf16le": unicode.UTF16(unicode.LittleEndian, unicode.UseBOM),
 	"utf16":   unicode.UTF16(unicode.BigEndian, unicode.ExpectBOM),
+	"utf32":   nil, // Not natively supported in Go's unicode package
+	"ucs2":    unicode.UTF16(unicode.LittleEndian, unicode.IgnoreBOM),
 	"ascii":   unicode.UTF8,
 
 	// Western European
@@ -1260,6 +1267,9 @@ var charsetDecoders = map[string]encoding.Encoding{
 	"sjis":      japanese.ShiftJIS,
 	"shift_jis": japanese.ShiftJIS,
 	"eucjp":     japanese.EUCJP,
+	"ujis":      japanese.EUCJP,
+	"cp932":     japanese.ShiftJIS,
+	"eucjpms":   nil, // Microsoft extension to EUC-JP (no native Go support)
 
 	// Korean
 	"euckr": korean.EUCKR,
@@ -1268,10 +1278,15 @@ var charsetDecoders = map[string]encoding.Encoding{
 	"cp850":    charmap.CodePage850,
 	"cp852":    charmap.CodePage852,
 	"macroman": charmap.Macintosh,
+	"macce":    nil, // Central European (Mac); no native Go support
 
-	// Other/special cases
-	"ucs2":   unicode.UTF16(unicode.LittleEndian, unicode.IgnoreBOM),
-	"binary": nil,
+	// Other/legacy MySQL charsets
+	"binary":   nil, // Binary/raw
+	"dec8":     nil, // DEC West European
+	"hp8":      nil, // HP Western European
+	"swe7":     nil, // Swedish
+	"armscii8": nil, // Armenian
+	"geostd8":  nil, // Georgian
 }
 
 func getDecoderByCharsetName(name string) (encoding.Encoding, error) {

@@ -1445,7 +1445,10 @@ func TestDecodeStringLatin1(t *testing.T) {
 			name: "Long string (>255, 2-byte length)",
 			input: func() []byte {
 				buf := new(bytes.Buffer)
-				binary.Write(buf, binary.LittleEndian, uint16(6))
+				err := binary.Write(buf, binary.LittleEndian, uint16(6))
+				if err != nil {
+					return nil
+				}
 				buf.Write([]byte{0xe2, 'f', 'g', 'h', 0xe9}) // 'âfghé'
 				return buf.Bytes()
 			}(),
@@ -1584,6 +1587,20 @@ func TestDecodeByCharSet(t *testing.T) {
 			charset: "big5",
 			length:  4,
 			wantStr: "你好",
+		},
+		{
+			name:    "Unknown charset fallback",
+			input:   append([]byte{5}, []byte("abcde")...),
+			charset: "unknown_charset",
+			length:  5,
+			wantStr: "abcde", // fallback to decodeString
+		},
+		{
+			name:    "Known but unsupported charset (returns nil decoder)",
+			input:   append([]byte{5}, []byte("abcde")...),
+			charset: "utf32",
+			length:  5,
+			wantStr: "abcde", // fallback to decodeString
 		},
 	}
 
