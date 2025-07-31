@@ -385,13 +385,7 @@ func TestWithoutSchemeExp(t *testing.T) {
 func TestGenerateCharsetQuery(t *testing.T) {
 	c := &Canal{}
 
-	tests := []struct {
-		tableRegex string
-		expected   string
-	}{
-		{
-			tableRegex: "testdb.testtable",
-			expected: `
+	expected := `
 		SELECT 
 		    ORDINAL_POSITION,
 			CHARACTER_SET_NAME,
@@ -399,32 +393,14 @@ func TestGenerateCharsetQuery(t *testing.T) {
 		FROM 
 			information_schema.COLUMNS
 		WHERE 
-			TABLE_SCHEMA = 'testdb'
-			AND TABLE_NAME = 'testtable'
+			TABLE_SCHEMA = ?
+			AND TABLE_NAME = ?
 			AND CHARACTER_SET_NAME IS NOT NULL;
-		`,
-		},
-		{
-			tableRegex: "mydb.mytable",
-			expected: `
-		SELECT 
-		    ORDINAL_POSITION,
-			CHARACTER_SET_NAME,
-			COLUMN_NAME
-		FROM 
-			information_schema.COLUMNS
-		WHERE 
-			TABLE_SCHEMA = 'mydb'
-			AND TABLE_NAME = 'mytable'
-			AND CHARACTER_SET_NAME IS NOT NULL;
-		`,
-		},
-	}
+		`
 
-	for _, tt := range tests {
-		actual, _ := c.GenerateCharsetQuery()
-		assert.Equal(t, normalizeSQL(tt.expected), normalizeSQL(actual))
-	}
+	actual, err := c.GenerateCharsetQuery()
+	assert.NoError(t, err)
+	assert.Equal(t, normalizeSQL(expected), normalizeSQL(actual))
 }
 
 // normalizeSQL trims whitespace and collapses it to make comparison easier
@@ -469,4 +445,68 @@ func TestSetColumnsCharset(t *testing.T) {
 		3: "latin3",
 	}
 	assert.Equal(t, expected, c.cfg.ColumnCharset[tableRegex])
+}
+
+func TestIsSafeIdentifier(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected bool
+	}{
+		// Valid identifiers
+		{"empty string", "", false},
+		{"single letter", "a", true},
+		{"single uppercase letter", "A", true},
+		{"single digit", "1", true},
+		{"single underscore", "_", true},
+		{"single hyphen", "-", true},
+		{"simple table name", "table", true},
+		{"simple database name", "mydb", true},
+		{"underscore prefix", "_table", true},
+		{"underscore suffix", "table_", true},
+		{"hyphen prefix", "-table", true},
+		{"hyphen suffix", "table-", true},
+		{"mixed letters and digits", "table123", true},
+		{"mixed with underscore", "my_table", true},
+		{"mixed with hyphen", "my-table", true},
+		{"complex valid name", "datanet-3", true},
+		{"all valid chars", "Test_123-abc", true},
+		{"unicode letters", "tàble", true},
+		{"chinese characters", "表格", true},
+
+		// Invalid identifiers
+		{"space", "my table", false},
+		{"dot", "my.table", false},
+		{"at symbol", "@table", false},
+		{"hash symbol", "#table", false},
+		{"dollar sign", "$table", false},
+		{"percent", "table%", false},
+		{"asterisk", "table*", false},
+		{"plus", "table+", false},
+		{"equals", "table=", false},
+		{"exclamation", "table!", false},
+		{"question mark", "table?", false},
+		{"comma", "table,name", false},
+		{"semicolon", "table;", false},
+		{"colon", "table:", false},
+		{"single quote", "table'", false},
+		{"double quote", "table\"", false},
+		{"backslash", "table\\", false},
+		{"forward slash", "table/", false},
+		{"pipe", "table|", false},
+		{"brackets", "table[0]", false},
+		{"parentheses", "table()", false},
+		{"curly braces", "table{}", false},
+		{"less than", "table<", false},
+		{"greater than", "table>", false},
+		{"tilde", "table~", false},
+		{"backtick", "table`", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := isSafeIdentifier(tt.input)
+			assert.Equal(t, tt.expected, result, "isSafeIdentifier(%q) = %v, want %v", tt.input, result, tt.expected)
+		})
+	}
 }
