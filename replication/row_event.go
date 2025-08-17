@@ -22,6 +22,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 var errMissingTableMapEvent = errors.New("invalid table id, no corresponding table map event")
@@ -1161,8 +1162,31 @@ func (e *RowsEvent) decodeValue(data []byte, tp byte, charset string, meta uint1
 	case MYSQL_TYPE_VARCHAR,
 		MYSQL_TYPE_VAR_STRING:
 		length = int(meta)
+		// For binary/varbinary columns (charset "binary"), preserve raw bytes
+		if strings.EqualFold(charset, "binary") {
+			v, n = decodeLengthEncodedBytes(data, length)
+			break
+		}
+		// Peek raw bytes; if not valid UTF-8 while charset claims UTF-8, treat as binary to avoid replacement corruption
+		raw, nPeek := decodeLengthEncodedBytes(data, length)
+		if strings.EqualFold(charset, "utf8") && !utf8.Valid(raw) {
+			v = raw
+			n = nPeek
+			break
+		}
 		v, n = decodeStringByCharSet(data, charset, length)
 	case MYSQL_TYPE_STRING:
+		// MYSQL_TYPE_STRING can represent CHAR/BINARY; honor binary charset and invalid UTF-8
+		if strings.EqualFold(charset, "binary") {
+			v, n = decodeLengthEncodedBytes(data, length)
+			break
+		}
+		raw, nPeek := decodeLengthEncodedBytes(data, length)
+		if strings.EqualFold(charset, "utf8") && !utf8.Valid(raw) {
+			v = raw
+			n = nPeek
+			break
+		}
 		v, n = decodeStringByCharSet(data, charset, length)
 	case MYSQL_TYPE_JSON:
 		// Refer: https://github.com/shyiko/mysql-binlog-connector-java/blob/master/src/main/java/com/github/shyiko/mysql/binlog/event/deserialization/AbstractRowsEventDataDeserializer.java#L404
@@ -1195,8 +1219,12 @@ func convertToString(s interface{}) (string, bool) {
 	}
 	switch v := s.(type) {
 	case []uint8:
-		str := string(v)
-		return str, true
+		// Only convert to string if the bytes are valid UTF-8; otherwise keep as bytes
+		if utf8.Valid(v) {
+			str := string(v)
+			return str, true
+		}
+		return "", false
 	default:
 		return "", false
 	}
@@ -1405,6 +1433,20 @@ func decodeStringWithEncoder(data []byte, length int, enc encoding.Encoding) (v 
 		v = string(decodedBytes)
 	}
 
+	return
+}
+
+// decodeLengthEncodedBytes reads a 1- or 2-byte length-prefixed byte slice without any charset decoding
+func decodeLengthEncodedBytes(data []byte, length int) (v []byte, n int) {
+	if length < 256 {
+		length = int(data[0])
+		n = length + 1
+		v = data[1:n]
+		return
+	}
+	length = int(binary.LittleEndian.Uint16(data[0:]))
+	n = length + 2
+	v = data[2:n]
 	return
 }
 
