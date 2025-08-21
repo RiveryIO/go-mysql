@@ -1620,9 +1620,9 @@ func TestBytesToLatin1StringPrintableMapping(t *testing.T) {
         in   []byte
         want string
     }{
-        {"leading control bytes trimmed", []byte{0x06, 0x11, '1', 'r', 'H', 'u', 0xce, 0x20, 0xf0, 0x20, 0x20, 0x20, 0x58, 0xc5, 0x58, 0xc4, 0x01}, "1rHuÎ ð   XÅXÄ "},
+        {"leading controls become spaces", []byte{0x06, 0x11, '1', 'r', 'H', 'u', 0xce, 0x20, 0xf0, 0x20, 0x20, 0x20, 0x58, 0xc5, 0x58, 0xc4, 0x01}, "  1rHuÎ ð   XÅXÄ "},
         {"controls inside become spaces", []byte{'A', 0x01, 'B', 0x02, 'C'}, "A B C"},
-        {"all controls => empty", []byte{0x00, 0x01, 0x02}, ""},
+        {"all controls => spaces", []byte{0x00, 0x01, 0x02}, "   "},
         {"printable preserved", []byte{0xc2, 'f', 'g', 'h', 0xe9}, "Âfghé"},
     }
     for _, tc := range cases {
@@ -1640,7 +1640,9 @@ func TestDecodeValueBinaryLatin1Fallback(t *testing.T) {
     e := &RowsEvent{}
     // Length-encoded: 1-byte length + bytes
     // bytes correspond to expected visual string "1rHuÎ ð   XÅXÄ " after mapping
-    raw := []byte{0x10, '1','r','H','u', 0xce, 0x20, 0xf0, 0x20, 0x20, 0x20, 'X', 0xc5, 'X', 0xc4, 0x01}
+    // include two leading control bytes [0x86, 0x11] which should become spaces,
+    // and a trailing 0x01 which also becomes a space
+    raw := []byte{0x12, 0x86, 0x11, '1','r','H','u', 0xce, 0x20, 0xf0, 0x20, 0x20, 0x20, 'X', 0xc5, 'X', 0xc4, 0x01}
     v, n, err := e.decodeValue(raw, mysql.MYSQL_TYPE_VAR_STRING, "binary", 255)
     if err != nil {
         t.Fatalf("decodeValue error: %v", err)
@@ -1652,7 +1654,7 @@ func TestDecodeValueBinaryLatin1Fallback(t *testing.T) {
     if !ok {
         t.Fatalf("value type = %T, want string", v)
     }
-    want := "1rHuÎ ð   XÅXÄ "
+    want := "  1rHuÎ ð   XÅXÄ "
     if s != want {
         t.Fatalf("decoded string = %q, want %q", s, want)
     }

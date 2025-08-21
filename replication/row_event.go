@@ -984,12 +984,7 @@ func (e *RowsEvent) decodeRows(data []byte, table *TableMapEvent, bitmap []byte)
 		tableRegex := fmt.Sprintf("%s.%s", table.Schema, table.Table)
 		charset, exists := table.columnsCharsets[tableRegex][i+1]
 		if !exists {
-			// Fallback to table default charset if provided; otherwise use utf8
-			if table.charset != "" {
-				charset = table.charset
-			} else {
-				charset = "utf8"
-			}
+			charset = "utf8"
 		}
 		row[i], n, err = e.decodeValue(data[pos:], table.ColumnType[i], charset, table.ColumnMeta[i])
 
@@ -1167,36 +1162,9 @@ func (e *RowsEvent) decodeValue(data []byte, tp byte, charset string, meta uint1
 	case MYSQL_TYPE_VARCHAR,
 		MYSQL_TYPE_VAR_STRING:
 		length = int(meta)
-		// For binary/varbinary columns (charset "binary"), render using Latin-1 mapping for readability
-		if strings.EqualFold(charset, "binary") {
-			raw, nPeek := decodeLengthEncodedBytes(data, length)
-			v = bytesToLatin1String(raw)
-			n = nPeek
-			break
-		}
-		// Peek raw bytes; if not valid UTF-8 while charset is a UTF-8 variant, render using Latin-1 mapping
-		raw, nPeek := decodeLengthEncodedBytes(data, length)
-		if isUtf8Charset(charset) && !utf8.Valid(raw) {
-			v = bytesToLatin1String(raw)
-			n = nPeek
-			break
-		}
-		v, n = decodeStringByCharSet(data, charset, length)
+		v, n = decodeLengthEncodedStringByCharset(data, charset, length)
 	case MYSQL_TYPE_STRING:
-		// MYSQL_TYPE_STRING can represent CHAR/BINARY; honor binary charset and invalid UTF-8
-		if strings.EqualFold(charset, "binary") {
-			raw, nPeek := decodeLengthEncodedBytes(data, length)
-			v = bytesToLatin1String(raw)
-			n = nPeek
-			break
-		}
-		raw, nPeek := decodeLengthEncodedBytes(data, length)
-		if isUtf8Charset(charset) && !utf8.Valid(raw) {
-			v = bytesToLatin1String(raw)
-			n = nPeek
-			break
-		}
-		v, n = decodeStringByCharSet(data, charset, length)
+		v, n = decodeLengthEncodedStringByCharset(data, charset, length)
 	case MYSQL_TYPE_JSON:
 		// Refer: https://github.com/shyiko/mysql-binlog-connector-java/blob/master/src/main/java/com/github/shyiko/mysql/binlog/event/deserialization/AbstractRowsEventDataDeserializer.java#L404
 		length = int(FixedLengthInt(data[0:meta]))
@@ -1228,11 +1196,8 @@ func convertToString(s interface{}) (string, bool) {
 	}
 	switch v := s.(type) {
 	case []uint8:
-		// If valid UTF-8, convert directly; otherwise map to Latin-1 string
-		if utf8.Valid(v) {
-			return string(v), true
-		}
-		return bytesToLatin1String(v), true
+		str := string(v)
+		return str, true
 	default:
 		return "", false
 	}
@@ -1242,66 +1207,53 @@ func decodeStringByCharSet(data []byte, charset string, length int) (v string, n
 	enc, err := getDecoderByCharsetName(charset)
 	if err != nil {
 		log.Errorf(err.Error())
-		v, n = decodeString(data, length)
-		v = sanitizeNonPrintable(v)
-		return v, n
+		return decodeString(data, length)
 	}
 	if enc == nil {
 		log.Warnf("Falling back to default decoding for charset: %s", charset)
-		v, n = decodeString(data, length)
-		v = sanitizeNonPrintable(v)
-		return v, n
+		return decodeString(data, length)
 	}
-	v, n = decodeStringWithEncoder(data, length, enc)
-	v = sanitizeNonPrintable(v)
-	return v, n
+	return decodeStringWithEncoder(data, length, enc)
+}
+
+func decodeLengthEncodedStringByCharset(data []byte, charset string, length int) (interface{}, int) {
+	if strings.EqualFold(charset, "binary") {
+		raw, n := decodeLengthEncodedBytes(data, length)
+		return bytesToLatin1String(raw), n
+	}
+	raw, n := decodeLengthEncodedBytes(data, length)
+	if isUtf8Charset(charset) && !utf8.Valid(raw) {
+		return bytesToLatin1String(raw), n
+	}
+	s, _n := decodeStringByCharSet(data, charset, length)
+	return s, _n
 }
 
 // isUtf8Charset returns true for utf8, utf8mb3, utf8mb4
 func isUtf8Charset(cs string) bool {
-    switch strings.ToLower(cs) {
-    case "utf8", "utf8mb3", "utf8mb4":
-        return true
-    default:
-        return false
-    }
+	switch strings.ToLower(cs) {
+	case "utf8", "utf8mb3", "utf8mb4":
+		return true
+	default:
+		return false
+	}
 }
 
-// bytesToLatin1String maps raw bytes to Unicode code points U+0000..U+00FF,
-// effectively rendering as ISO-8859-1 in a UTF-8 string.
 func bytesToLatin1String(b []byte) string {
-    if len(b) == 0 {
-        return ""
-    }
-    runes := make([]rune, len(b))
-    for i, by := range b {
-        // Treat non-printable bytes as spaces for readability.
-        // Printable ranges: 0x20-0x7E (ASCII) and 0xA0-0xFF (printable Latin-1)
-        if (by >= 0x20 && by <= 0x7E) || by >= 0xA0 {
-            runes[i] = rune(by)
-        } else {
-            runes[i] = ' '
-        }
-    }
-    return string(runes)
-}
-
-// sanitizeNonPrintable replaces non-printable runes with space.
-// Printable ranges: U+0020..U+007E and U+00A0..
-func sanitizeNonPrintable(s string) string {
-    if s == "" {
-        return s
-    }
-    var b strings.Builder
-    b.Grow(len(s))
-    for _, r := range s {
-        if (r >= 0x20 && r <= 0x7E) || r >= 0xA0 {
-            b.WriteRune(r)
-        } else {
-            b.WriteByte(' ')
-        }
-    }
-    return b.String()
+	if len(b) == 0 {
+		return ""
+	}
+	runes := make([]rune, len(b))
+	for i, by := range b {
+		// Treat non-printable bytes as spaces for readability.
+		// Printable ranges: 0x20-0x7E (ASCII) and 0xA0-0xFF (printable Latin-1)
+		if (by >= 0x20 && by <= 0x7E) || by >= 0xA0 {
+			runes[i] = rune(by)
+		} else {
+			runes[i] = ' '
+		}
+	}
+	return string(runes)
 }
 
 var charsetDecoders = map[string]encoding.Encoding{
@@ -1497,7 +1449,6 @@ func decodeStringWithEncoder(data []byte, length int, enc encoding.Encoding) (v 
 	return
 }
 
-// decodeLengthEncodedBytes reads a 1- or 2-byte length-prefixed byte slice without any charset decoding
 func decodeLengthEncodedBytes(data []byte, length int) (v []byte, n int) {
 	if length < 256 {
 		length = int(data[0])
@@ -1895,9 +1846,8 @@ func (e *RowsEvent) Dump(w io.Writer) {
 	for _, rows := range e.Rows {
 		fmt.Fprintf(w, "--\n")
 		for j, d := range rows {
-			if b, ok := d.([]byte); ok {
-				// Print binary data as hex to avoid garbled output
-				fmt.Fprintf(w, "%d:0x%s\n", j, hex.EncodeToString(b))
+			if _, ok := d.([]byte); ok {
+				fmt.Fprintf(w, "%d:%q\n", j, d)
 			} else {
 				fmt.Fprintf(w, "%d:%#v\n", j, d)
 			}
