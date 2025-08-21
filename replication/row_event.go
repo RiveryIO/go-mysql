@@ -1163,25 +1163,21 @@ func (e *RowsEvent) decodeValue(data []byte, tp byte, charset string, meta uint1
 		newValue, ok := convertToString(v)
 		if ok {
 			v = newValue
-		} else {
-			if b, okb := v.([]byte); okb {
-				v = "0x" + hex.EncodeToString(b)
-			}
 		}
 	case MYSQL_TYPE_VARCHAR,
 		MYSQL_TYPE_VAR_STRING:
 		length = int(meta)
-		// For binary/varbinary columns (charset "binary"), represent as hex string
+		// For binary/varbinary columns (charset "binary"), render using Latin-1 mapping for readability
 		if strings.EqualFold(charset, "binary") {
 			raw, nPeek := decodeLengthEncodedBytes(data, length)
-			v = "0x" + hex.EncodeToString(raw)
+			v = bytesToLatin1String(raw)
 			n = nPeek
 			break
 		}
-		// Peek raw bytes; if not valid UTF-8 while charset is a UTF-8 variant, represent as hex string
+		// Peek raw bytes; if not valid UTF-8 while charset is a UTF-8 variant, render using Latin-1 mapping
 		raw, nPeek := decodeLengthEncodedBytes(data, length)
 		if isUtf8Charset(charset) && !utf8.Valid(raw) {
-			v = "0x" + hex.EncodeToString(raw)
+			v = bytesToLatin1String(raw)
 			n = nPeek
 			break
 		}
@@ -1190,13 +1186,13 @@ func (e *RowsEvent) decodeValue(data []byte, tp byte, charset string, meta uint1
 		// MYSQL_TYPE_STRING can represent CHAR/BINARY; honor binary charset and invalid UTF-8
 		if strings.EqualFold(charset, "binary") {
 			raw, nPeek := decodeLengthEncodedBytes(data, length)
-			v = "0x" + hex.EncodeToString(raw)
+			v = bytesToLatin1String(raw)
 			n = nPeek
 			break
 		}
 		raw, nPeek := decodeLengthEncodedBytes(data, length)
 		if isUtf8Charset(charset) && !utf8.Valid(raw) {
-			v = "0x" + hex.EncodeToString(raw)
+			v = bytesToLatin1String(raw)
 			n = nPeek
 			break
 		}
@@ -1232,12 +1228,11 @@ func convertToString(s interface{}) (string, bool) {
 	}
 	switch v := s.(type) {
 	case []uint8:
-		// Only convert to string if the bytes are valid UTF-8; otherwise keep as bytes
+		// If valid UTF-8, convert directly; otherwise map to Latin-1 string
 		if utf8.Valid(v) {
-			str := string(v)
-			return str, true
+			return string(v), true
 		}
-		return "", false
+		return bytesToLatin1String(v), true
 	default:
 		return "", false
 	}
@@ -1264,6 +1259,19 @@ func isUtf8Charset(cs string) bool {
     default:
         return false
     }
+}
+
+// bytesToLatin1String maps raw bytes to Unicode code points U+0000..U+00FF,
+// effectively rendering as ISO-8859-1 in a UTF-8 string.
+func bytesToLatin1String(b []byte) string {
+    if len(b) == 0 {
+        return ""
+    }
+    runes := make([]rune, len(b))
+    for i, by := range b {
+        runes[i] = rune(by)
+    }
+    return string(runes)
 }
 
 var charsetDecoders = map[string]encoding.Encoding{
