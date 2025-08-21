@@ -984,7 +984,12 @@ func (e *RowsEvent) decodeRows(data []byte, table *TableMapEvent, bitmap []byte)
 		tableRegex := fmt.Sprintf("%s.%s", table.Schema, table.Table)
 		charset, exists := table.columnsCharsets[tableRegex][i+1]
 		if !exists {
-			charset = "utf8"
+			// Fallback to table default charset if provided; otherwise use utf8
+			if table.charset != "" {
+				charset = table.charset
+			} else {
+				charset = "utf8"
+			}
 		}
 		row[i], n, err = e.decodeValue(data[pos:], table.ColumnType[i], charset, table.ColumnMeta[i])
 
@@ -1158,19 +1163,25 @@ func (e *RowsEvent) decodeValue(data []byte, tp byte, charset string, meta uint1
 		newValue, ok := convertToString(v)
 		if ok {
 			v = newValue
+		} else {
+			if b, okb := v.([]byte); okb {
+				v = "0x" + hex.EncodeToString(b)
+			}
 		}
 	case MYSQL_TYPE_VARCHAR,
 		MYSQL_TYPE_VAR_STRING:
 		length = int(meta)
-		// For binary/varbinary columns (charset "binary"), preserve raw bytes
+		// For binary/varbinary columns (charset "binary"), represent as hex string
 		if strings.EqualFold(charset, "binary") {
-			v, n = decodeLengthEncodedBytes(data, length)
+			raw, nPeek := decodeLengthEncodedBytes(data, length)
+			v = "0x" + hex.EncodeToString(raw)
+			n = nPeek
 			break
 		}
-		// Peek raw bytes; if not valid UTF-8 while charset claims UTF-8, treat as binary to avoid replacement corruption
+		// Peek raw bytes; if not valid UTF-8 while charset is a UTF-8 variant, represent as hex string
 		raw, nPeek := decodeLengthEncodedBytes(data, length)
-		if strings.EqualFold(charset, "utf8") && !utf8.Valid(raw) {
-			v = raw
+		if isUtf8Charset(charset) && !utf8.Valid(raw) {
+			v = "0x" + hex.EncodeToString(raw)
 			n = nPeek
 			break
 		}
@@ -1178,12 +1189,14 @@ func (e *RowsEvent) decodeValue(data []byte, tp byte, charset string, meta uint1
 	case MYSQL_TYPE_STRING:
 		// MYSQL_TYPE_STRING can represent CHAR/BINARY; honor binary charset and invalid UTF-8
 		if strings.EqualFold(charset, "binary") {
-			v, n = decodeLengthEncodedBytes(data, length)
+			raw, nPeek := decodeLengthEncodedBytes(data, length)
+			v = "0x" + hex.EncodeToString(raw)
+			n = nPeek
 			break
 		}
 		raw, nPeek := decodeLengthEncodedBytes(data, length)
-		if strings.EqualFold(charset, "utf8") && !utf8.Valid(raw) {
-			v = raw
+		if isUtf8Charset(charset) && !utf8.Valid(raw) {
+			v = "0x" + hex.EncodeToString(raw)
 			n = nPeek
 			break
 		}
@@ -1241,6 +1254,16 @@ func decodeStringByCharSet(data []byte, charset string, length int) (v string, n
 		return decodeString(data, length)
 	}
 	return decodeStringWithEncoder(data, length, enc)
+}
+
+// isUtf8Charset returns true for utf8, utf8mb3, utf8mb4
+func isUtf8Charset(cs string) bool {
+    switch strings.ToLower(cs) {
+    case "utf8", "utf8mb3", "utf8mb4":
+        return true
+    default:
+        return false
+    }
 }
 
 var charsetDecoders = map[string]encoding.Encoding{
