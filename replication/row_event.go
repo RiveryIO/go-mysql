@@ -1834,8 +1834,9 @@ func (e *RowsEvent) Dump(w io.Writer) {
 	for _, rows := range e.Rows {
 		fmt.Fprintf(w, "--\n")
 		for j, d := range rows {
-			if _, ok := d.([]byte); ok {
-				fmt.Fprintf(w, "%d:%q\n", j, d)
+			if b, ok := d.([]byte); ok {
+				// Print binary data as hex to avoid garbled output
+				fmt.Fprintf(w, "%d:0x%s\n", j, hex.EncodeToString(b))
 			} else {
 				fmt.Fprintf(w, "%d:%#v\n", j, d)
 			}
