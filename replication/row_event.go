@@ -1242,13 +1242,19 @@ func decodeStringByCharSet(data []byte, charset string, length int) (v string, n
 	enc, err := getDecoderByCharsetName(charset)
 	if err != nil {
 		log.Errorf(err.Error())
-		return decodeString(data, length)
+		v, n = decodeString(data, length)
+		v = sanitizeNonPrintable(v)
+		return v, n
 	}
 	if enc == nil {
 		log.Warnf("Falling back to default decoding for charset: %s", charset)
-		return decodeString(data, length)
+		v, n = decodeString(data, length)
+		v = sanitizeNonPrintable(v)
+		return v, n
 	}
-	return decodeStringWithEncoder(data, length, enc)
+	v, n = decodeStringWithEncoder(data, length, enc)
+	v = sanitizeNonPrintable(v)
+	return v, n
 }
 
 // isUtf8Charset returns true for utf8, utf8mb3, utf8mb4
@@ -1278,6 +1284,24 @@ func bytesToLatin1String(b []byte) string {
         }
     }
     return string(runes)
+}
+
+// sanitizeNonPrintable replaces non-printable runes with space.
+// Printable ranges: U+0020..U+007E and U+00A0..
+func sanitizeNonPrintable(s string) string {
+    if s == "" {
+        return s
+    }
+    var b strings.Builder
+    b.Grow(len(s))
+    for _, r := range s {
+        if (r >= 0x20 && r <= 0x7E) || r >= 0xA0 {
+            b.WriteRune(r)
+        } else {
+            b.WriteByte(' ')
+        }
+    }
+    return b.String()
 }
 
 var charsetDecoders = map[string]encoding.Encoding{
