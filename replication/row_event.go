@@ -1269,7 +1269,13 @@ func bytesToLatin1String(b []byte) string {
     }
     runes := make([]rune, len(b))
     for i, by := range b {
-        runes[i] = rune(by)
+        // Treat non-printable bytes as spaces for readability.
+        // Printable ranges: 0x20-0x7E (ASCII) and 0xA0-0xFF (printable Latin-1)
+        if (by >= 0x20 && by <= 0x7E) || by >= 0xA0 {
+            runes[i] = rune(by)
+        } else {
+            runes[i] = ' '
+        }
     }
     return string(runes)
 }
