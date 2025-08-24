@@ -1162,9 +1162,9 @@ func (e *RowsEvent) decodeValue(data []byte, tp byte, charset string, meta uint1
 	case MYSQL_TYPE_VARCHAR,
 		MYSQL_TYPE_VAR_STRING:
 		length = int(meta)
-		v, n = decodeLengthEncodedStringByCharset(data, charset, length)
+		v, n = decodeStringByCharSet(data, charset, length)
 	case MYSQL_TYPE_STRING:
-		v, n = decodeLengthEncodedStringByCharset(data, charset, length)
+		v, n = decodeStringByCharSet(data, charset, length)
 	case MYSQL_TYPE_JSON:
 		// Refer: https://github.com/shyiko/mysql-binlog-connector-java/blob/master/src/main/java/com/github/shyiko/mysql/binlog/event/deserialization/AbstractRowsEventDataDeserializer.java#L404
 		length = int(FixedLengthInt(data[0:meta]))
@@ -1204,6 +1204,11 @@ func convertToString(s interface{}) (string, bool) {
 }
 
 func decodeStringByCharSet(data []byte, charset string, length int) (v string, n int) {
+	raw, n := decodeLengthEncodedBytes(data, length)
+	if isUtf8Charset(charset) && !utf8.Valid(raw) {
+		log.Infof("Charset is not valid UTF-8 character set %v", charset)
+		return bytesToLatin1String(raw), n
+	}
 	enc, err := getDecoderByCharsetName(charset)
 	if err != nil {
 		log.Errorf(err.Error())
@@ -1214,16 +1219,6 @@ func decodeStringByCharSet(data []byte, charset string, length int) (v string, n
 		return decodeString(data, length)
 	}
 	return decodeStringWithEncoder(data, length, enc)
-}
-
-func decodeLengthEncodedStringByCharset(data []byte, charset string, length int) (interface{}, int) {
-	raw, n := decodeLengthEncodedBytes(data, length)
-	if isUtf8Charset(charset) && !utf8.Valid(raw) {
-		log.Infof("Charset is not valid UTF-8 character set %v", charset)
-		return bytesToLatin1String(raw), n
-	}
-	s, _n := decodeStringByCharSet(data, charset, length)
-	return s, _n
 }
 
 // isUtf8Charset returns true for utf8, utf8mb3, utf8mb4
