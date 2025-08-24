@@ -22,7 +22,6 @@ import (
 	"strconv"
 	"strings"
 	"time"
-	"unicode/utf8"
 )
 
 var errMissingTableMapEvent = errors.New("invalid table id, no corresponding table map event")
@@ -1204,11 +1203,6 @@ func convertToString(s interface{}) (string, bool) {
 }
 
 func decodeStringByCharSet(data []byte, charset string, length int) (v string, n int) {
-	raw, n := decodeLengthEncodedBytes(data, length)
-	if isUtf8Charset(charset) && !utf8.Valid(raw) {
-		log.Infof("Charset is not valid UTF-8 character set %v", charset)
-		return bytesToLatin1String(raw), n
-	}
 	enc, err := getDecoderByCharsetName(charset)
 	if err != nil {
 		log.Errorf(err.Error())
@@ -1219,33 +1213,6 @@ func decodeStringByCharSet(data []byte, charset string, length int) (v string, n
 		return decodeString(data, length)
 	}
 	return decodeStringWithEncoder(data, length, enc)
-}
-
-// isUtf8Charset returns true for utf8, utf8mb3, utf8mb4
-func isUtf8Charset(cs string) bool {
-	switch strings.ToLower(cs) {
-	case "utf8", "utf8mb3", "utf8mb4":
-		return true
-	default:
-		return false
-	}
-}
-
-func bytesToLatin1String(b []byte) string {
-	if len(b) == 0 {
-		return ""
-	}
-	runes := make([]rune, len(b))
-	for i, by := range b {
-		// Treat non-printable bytes as spaces for readability.
-		// Printable ranges: 0x20-0x7E (ASCII) and 0xA0-0xFF (printable Latin-1)
-		if (by >= 0x20 && by <= 0x7E) || by >= 0xA0 {
-			runes[i] = rune(by)
-		} else {
-			runes[i] = ' '
-		}
-	}
-	return string(runes)
 }
 
 var charsetDecoders = map[string]encoding.Encoding{
@@ -1438,19 +1405,6 @@ func decodeStringWithEncoder(data []byte, length int, enc encoding.Encoding) (v 
 		v = string(decodedBytes)
 	}
 
-	return
-}
-
-func decodeLengthEncodedBytes(data []byte, length int) (v []byte, n int) {
-	if length < 256 {
-		length = int(data[0])
-		n = length + 1
-		v = data[1:n]
-		return
-	}
-	length = int(binary.LittleEndian.Uint16(data[0:]))
-	n = length + 2
-	v = data[2:n]
 	return
 }
 

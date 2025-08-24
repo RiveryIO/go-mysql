@@ -438,14 +438,17 @@ func (c *Canal) GenerateCharsetQuery() (string, error) {
 	query := `
 		SELECT 
 		    ORDINAL_POSITION,
-			CHARACTER_SET_NAME,
+			CASE
+				WHEN CHARACTER_SET_NAME IS NOT NULL THEN CHARACTER_SET_NAME
+				WHEN DATA_TYPE IN ('binary','varbinary','tinyblob','blob','mediumblob','longblob') THEN 'binary'
+				ELSE NULL
+			END AS CHARACTER_SET_NAME,
 			COLUMN_NAME
 		FROM 
 			information_schema.COLUMNS
 		WHERE 
 			TABLE_SCHEMA = ?
-			AND TABLE_NAME = ?
-			AND CHARACTER_SET_NAME IS NOT NULL;
+			AND TABLE_NAME = ?;
 		`
 
 	return query, nil
