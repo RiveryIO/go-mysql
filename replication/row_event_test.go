@@ -1613,3 +1613,28 @@ func TestDecodeByCharSet(t *testing.T) {
 		})
 	}
 }
+
+func TestDecodeValueBinaryLatin1Fallback(t *testing.T) {
+	// Simulate VARCHAR/VAR_STRING with charset binary and invalid UTF-8
+	e := &RowsEvent{}
+	// Length-encoded: 1-byte length + bytes
+	// bytes correspond to expected visual string "1rHuÎ ð   XÅXÄ " after mapping
+	// include two leading control bytes [0x86, 0x11] which should become spaces,
+	// and a trailing 0x01 which also becomes a space
+	raw := []byte{0x11, 0x86, 0x11, '1', 'r', 'H', 'u', 0xce, 0x20, 0xf0, 0x20, 0x20, 0x20, 'X', 0xc5, 'X', 0xc4, 0x01}
+	v, n, err := e.decodeValue(raw, mysql.MYSQL_TYPE_VAR_STRING, "latin1", 255)
+	if err != nil {
+		t.Fatalf("decodeValue error: %v", err)
+	}
+	if n != int(raw[0])+1 {
+		t.Fatalf("read length = %d, want %d", n, int(raw[0])+1)
+	}
+	s, ok := v.(string)
+	if !ok {
+		t.Fatalf("value type = %T, want string", v)
+	}
+	want := "  1rHuÎ ð   XÅXÄ "
+	if s != want {
+		t.Fatalf("decoded string = %q, want %q", s, want)
+	}
+}

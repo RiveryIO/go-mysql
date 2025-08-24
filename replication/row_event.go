@@ -1195,7 +1195,7 @@ func convertToString(s interface{}) (string, bool) {
 	}
 	switch v := s.(type) {
 	case []uint8:
-		str := string(v)
+		str := sanitizeNonPrintable(string(v))
 		return str, true
 	default:
 		return "", false
@@ -1206,13 +1206,34 @@ func decodeStringByCharSet(data []byte, charset string, length int) (v string, n
 	enc, err := getDecoderByCharsetName(charset)
 	if err != nil {
 		log.Errorf(err.Error())
-		return decodeString(data, length)
+		v, n = decodeString(data, length)
+		return sanitizeNonPrintable(v), n
 	}
 	if enc == nil {
 		log.Warnf("Falling back to default decoding for charset: %s", charset)
-		return decodeString(data, length)
+		v, n = decodeString(data, length)
+		return sanitizeNonPrintable(v), n
 	}
-	return decodeStringWithEncoder(data, length, enc)
+	v, n = decodeStringWithEncoder(data, length, enc)
+	return sanitizeNonPrintable(v), n
+}
+
+// sanitizeNonPrintable replaces non-printable runes with space for readability.
+// Printable ranges: U+0020..U+007E (ASCII) and U+00A0..
+func sanitizeNonPrintable(s string) string {
+	if s == "" {
+		return s
+	}
+	var b strings.Builder
+	b.Grow(len(s))
+	for _, r := range s {
+		if (r >= 0x20 && r <= 0x7E) || r >= 0xA0 {
+			b.WriteRune(r)
+		} else {
+			b.WriteByte(' ')
+		}
+	}
+	return b.String()
 }
 
 var charsetDecoders = map[string]encoding.Encoding{
@@ -1641,7 +1662,7 @@ func decodeDatetime2(data []byte, dec uint16) (interface{}, int, error) {
 	ymdhms := tmp >> 24
 
 	ymd := ymdhms >> 17
-	ym := ymd >> 5
+	ym := ymdhms % (1 << 17)
 	hms := ymdhms % (1 << 17)
 
 	day := int(ymd % (1 << 5))

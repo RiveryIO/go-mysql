@@ -387,15 +387,24 @@ func TestGenerateCharsetQuery(t *testing.T) {
 
 	expected := `
 		SELECT 
-		    ORDINAL_POSITION,
-			CHARACTER_SET_NAME,
-			COLUMN_NAME
+		    c.ORDINAL_POSITION,
+			COALESCE(
+				c.CHARACTER_SET_NAME,
+				CASE 
+					WHEN c.DATA_TYPE IN ('binary','varbinary','tinyblob','blob','mediumblob','longblob') THEN col.CHARACTER_SET_NAME
+					ELSE NULL
+				END
+			) AS CHARACTER_SET_NAME,
+			c.COLUMN_NAME
 		FROM 
-			information_schema.COLUMNS
+			information_schema.COLUMNS c
+		LEFT JOIN information_schema.TABLES t
+			ON t.TABLE_SCHEMA = c.TABLE_SCHEMA AND t.TABLE_NAME = c.TABLE_NAME
+		LEFT JOIN information_schema.COLLATIONS col
+			ON col.COLLATION_NAME = t.TABLE_COLLATION
 		WHERE 
-			TABLE_SCHEMA = ?
-			AND TABLE_NAME = ?
-			AND CHARACTER_SET_NAME IS NOT NULL;
+			c.TABLE_SCHEMA = ?
+			AND c.TABLE_NAME = ?;
 		`
 
 	actual, err := c.GenerateCharsetQuery()
