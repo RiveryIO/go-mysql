@@ -1643,7 +1643,7 @@ func TestDecodeValueBinaryLatin1Fallback(t *testing.T) {
 	// include two leading control bytes [0x86, 0x11] which should become spaces,
 	// and a trailing 0x01 which also becomes a space
 	raw := []byte{0x11, 0x86, 0x11, '1', 'r', 'H', 'u', 0xce, 0x20, 0xf0, 0x20, 0x20, 0x20, 'X', 0xc5, 'X', 0xc4, 0x01}
-	v, n, err := e.decodeValue(raw, mysql.MYSQL_TYPE_VAR_STRING, "binary", 255)
+	v, n, err := e.decodeValue(raw, mysql.MYSQL_TYPE_VAR_STRING, "utf8", 255)
 	if err != nil {
 		t.Fatalf("decodeValue error: %v", err)
 	}
