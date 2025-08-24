@@ -440,7 +440,7 @@ func (c *Canal) GenerateCharsetQuery() (string, error) {
 			c.ORDINAL_POSITION,
 			CASE 
 				WHEN c.CHARACTER_SET_NAME IS NOT NULL THEN c.CHARACTER_SET_NAME
-				WHEN c.DATA_TYPE IN ('binary','varbinary','tinyblob','blob','mediumblob','longblob') THEN 'binary'
+				WHEN c.DATA_TYPE IN ('binary','varbinary','tinyblob','blob','mediumblob','longblob') THEN col.CHARACTER_SET_NAME
 				ELSE col.CHARACTER_SET_NAME
 			END AS CHARACTER_SET_NAME,
 			c.COLUMN_NAME
