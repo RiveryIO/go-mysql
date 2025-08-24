@@ -22,6 +22,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 var errMissingTableMapEvent = errors.New("invalid table id, no corresponding table map event")
@@ -1195,8 +1196,12 @@ func convertToString(s interface{}) (string, bool) {
 	}
 	switch v := s.(type) {
 	case []uint8:
-		str := sanitizeNonPrintable(string(v))
-		return str, true
+		// Only convert to string if the bytes are valid UTF-8; otherwise keep as bytes
+		if utf8.Valid(v) {
+			str := string(v)
+			return str, true
+		}
+		return "", false
 	default:
 		return "", false
 	}
@@ -1206,16 +1211,13 @@ func decodeStringByCharSet(data []byte, charset string, length int) (v string, n
 	enc, err := getDecoderByCharsetName(charset)
 	if err != nil {
 		log.Errorf(err.Error())
-		v, n = decodeString(data, length)
-		return sanitizeNonPrintable(v), n
+		return decodeString(data, length)
 	}
 	if enc == nil {
 		log.Warnf("Falling back to default decoding for charset: %s", charset)
-		v, n = decodeString(data, length)
-		return sanitizeNonPrintable(v), n
+		return decodeString(data, length)
 	}
-	v, n = decodeStringWithEncoder(data, length, enc)
-	return sanitizeNonPrintable(v), n
+	return decodeStringWithEncoder(data, length, enc)
 }
 
 // sanitizeNonPrintable replaces non-printable runes with space for readability.
