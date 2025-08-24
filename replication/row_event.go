@@ -1218,11 +1218,13 @@ func decodeStringByCharSet(data []byte, charset string, length int) (v string, n
 
 func decodeLengthEncodedStringByCharset(data []byte, charset string, length int) (interface{}, int) {
 	if strings.EqualFold(charset, "binary") {
+		log.Infof("into strings.EqualFold(charset, \"binary\")")
 		raw, n := decodeLengthEncodedBytes(data, length)
 		return bytesToLatin1String(raw), n
 	}
 	raw, n := decodeLengthEncodedBytes(data, length)
 	if isUtf8Charset(charset) && !utf8.Valid(raw) {
+		log.Infof("into isUtf8Charset(charset) && !utf8.Valid(raw)")
 		return bytesToLatin1String(raw), n
 	}
 	s, _n := decodeStringByCharSet(data, charset, length)
