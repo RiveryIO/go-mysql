@@ -1662,7 +1662,7 @@ func decodeDatetime2(data []byte, dec uint16) (interface{}, int, error) {
 	ymdhms := tmp >> 24
 
 	ymd := ymdhms >> 17
-	ym := ymdhms % (1 << 17)
+	ym := ymd >> 5
 	hms := ymdhms % (1 << 17)
 
 	day := int(ymd % (1 << 5))
