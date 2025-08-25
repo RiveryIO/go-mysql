@@ -451,8 +451,9 @@ func (c *Canal) GenerateCharsetQuery() (string, error) {
 			ON col.COLLATION_NAME = t.TABLE_COLLATION
 		WHERE 
 			c.TABLE_SCHEMA = ?
-			AND c.TABLE_NAME = ?;
-`
+			AND c.TABLE_NAME = ?
+			AND (c.CHARACTER_SET_NAME IS NOT NULL OR c.DATA_TYPE IN ('binary','varbinary','tinyblob','blob','mediumblob','longblob'));
+	`
 
 	return query, nil
 
