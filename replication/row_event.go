@@ -864,6 +864,23 @@ type RowsEvent struct {
 	timestampStringLocation *time.Location
 	useDecimal              bool
 	ignoreJSONDecodeErr     bool
+
+	// --- DEBUG FIELDS (no behavior change) ---
+	debugRowIndex          int
+	debugColumnIndex       int
+	debugColumnMeta        uint16
+	debugColumnType        byte
+	debugRemainingSliceLen int
+	debugNullBitIndex      int
+	debugSchema            string
+	debugTable             string
+	debugColumnName        string
+	debugSlicePrefixHex    string
+	debugColumnBitmap1Hex  string
+	debugColumnBitmap2Hex  string
+	debugNullBitmapHex     string
+	debugCollationMapStr   string
+	debugCharset           string
 }
 
 func (e *RowsEvent) Decode(data []byte) (err2 error) {
@@ -889,10 +906,14 @@ func (e *RowsEvent) Decode(data []byte) (err2 error) {
 	bitCount := bitmapByteSize(int(e.ColumnCount))
 	e.ColumnBitmap1 = data[pos : pos+bitCount]
 	pos += bitCount
+	// debug: store column bitmap1 hex
+	e.debugColumnBitmap1Hex = hex.EncodeToString(e.ColumnBitmap1)
 
 	if e.needBitmap2 {
 		e.ColumnBitmap2 = data[pos : pos+bitCount]
 		pos += bitCount
+		// debug: store column bitmap2 hex
+		e.debugColumnBitmap2Hex = hex.EncodeToString(e.ColumnBitmap2)
 	}
 
 	var ok bool
@@ -910,9 +931,35 @@ func (e *RowsEvent) Decode(data []byte) (err2 error) {
 	// ... repeat rows until event-end
 	defer func() {
 		if r := recover(); r != nil {
-			errStr := fmt.Sprintf("parse rows event panic %v, data %q, parsed rows %#v, table map %#v", r, data, e, e.Table)
-			log.Errorf("%s\n%s", errStr, Pstack())
-			err2 = errors.Trace(errors.New(errStr))
+			// build collation map string if available
+			if e.Table != nil {
+				coll := e.Table.CollationMap()
+				if len(coll) > 0 {
+					e.debugCollationMapStr = fmt.Sprintf("%v", coll)
+				}
+			}
+			oldStr := fmt.Sprintf("parse rows event panic %v, data %q, parsed rows %#v, table map %#v", r, data, e, e.Table)
+			newStr := fmt.Sprintf(
+				"[debug] schema.table=%s.%s colName=%s row=%d col=%d type=%d meta=%d charset=%s nullBitIdx=%d remSlice=%d sliceHexPrefix=%s colBitmap1=%s colBitmap2=%s nullBitmap=%s collationMap=%s",
+				e.debugSchema,
+				e.debugTable,
+				e.debugColumnName,
+				e.debugRowIndex,
+				e.debugColumnIndex,
+				int(e.debugColumnType),
+				int(e.debugColumnMeta),
+				e.debugCharset,
+				e.debugNullBitIndex,
+				e.debugRemainingSliceLen,
+				e.debugSlicePrefixHex,
+				e.debugColumnBitmap1Hex,
+				e.debugColumnBitmap2Hex,
+				e.debugNullBitmapHex,
+				e.debugCollationMapStr,
+			)
+			combined := fmt.Sprintf("[OLD] %s\n[NEW] %s", oldStr, newStr)
+			log.Errorf("%s\n%s", combined, Pstack())
+			err2 = errors.Trace(errors.New(combined))
 		}
 	}()
 
@@ -963,6 +1010,9 @@ func (e *RowsEvent) decodeRows(data []byte, table *TableMapEvent, bitmap []byte)
 	nullBitmap := data[pos : pos+count]
 	pos += count
 
+	// debug: capture null bitmap hex for this row
+	e.debugNullBitmapHex = hex.EncodeToString(nullBitmap)
+
 	nullbitIndex := 0
 
 	var n int
@@ -985,6 +1035,25 @@ func (e *RowsEvent) decodeRows(data []byte, table *TableMapEvent, bitmap []byte)
 		if !exists {
 			charset = "utf8"
 		}
+		// debug context before decode
+		e.debugSchema = string(table.Schema)
+		e.debugTable = string(table.Table)
+		if len(table.ColumnName) == int(e.ColumnCount) {
+			e.debugColumnName = string(table.ColumnName[i])
+		} else {
+			e.debugColumnName = ""
+		}
+		e.debugColumnMeta = table.ColumnMeta[i]
+		e.debugColumnType = table.ColumnType[i]
+		e.debugCharset = charset
+		remaining := data[pos:]
+		e.debugRemainingSliceLen = len(remaining)
+		prefixLen := 32
+		if len(remaining) < prefixLen {
+			prefixLen = len(remaining)
+		}
+		e.debugSlicePrefixHex = hex.EncodeToString(remaining[:prefixLen])
+
 		row[i], n, err = e.decodeValue(data[pos:], table.ColumnType[i], charset, table.ColumnMeta[i])
 
 		if err != nil {
