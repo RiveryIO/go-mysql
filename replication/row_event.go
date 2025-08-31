@@ -1203,6 +1203,9 @@ func convertToString(s interface{}) (string, bool) {
 }
 
 func decodeStringByCharSet(data []byte, charset string, length int) (v string, n int) {
+	if len(data) == 0 {
+		return "", 0
+	}
 	enc, err := getDecoderByCharsetName(charset)
 	if err != nil {
 		log.Errorf(err.Error())
