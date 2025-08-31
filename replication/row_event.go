@@ -1017,6 +1017,10 @@ func (e *RowsEvent) parseFracTime(t interface{}) interface{} {
 func (e *RowsEvent) decodeValue(data []byte, tp byte, charset string, meta uint16) (v interface{}, n int, err error) {
 	var length int = 0
 
+	if len(data) == 0 {
+		return nil, 0, fmt.Errorf("no data available for type %d", tp)
+	}
+
 	if tp == MYSQL_TYPE_STRING {
 		if meta >= 256 {
 			b0 := uint8(meta >> 8)
