@@ -1037,9 +1037,6 @@ func (e *RowsEvent) decodeValue(data []byte, tp byte, charset string, meta uint1
 	case MYSQL_TYPE_NULL:
 		return nil, 0, nil
 	case MYSQL_TYPE_LONG:
-		if len(data) < 4 {
-			return nil, 0, nil
-		}
 		n = 4
 		v = ParseBinaryInt32(data)
 	case MYSQL_TYPE_TINY:
