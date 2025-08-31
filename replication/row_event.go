@@ -1413,20 +1413,14 @@ func replaceUnsupportedCharacters(data []byte, length int) []byte {
 }
 
 func decodeStringWithEncoder(data []byte, length int, enc encoding.Encoding) (v string, n int) {
-	// Define the Latin1 decoder
 	decoder := enc.NewDecoder()
-	if !supportsSmartQuotes(enc) {
-		data = replaceUnsupportedCharacters(data, length)
-	}
 
 	if length < 256 {
-		// If the length is smaller than 256, extract the length from the first byte
 		length = int(data[0])
 		n = length + 1
 		decodedBytes, _, _ := transform.Bytes(decoder, data[1:n])
 		v = string(decodedBytes)
 	} else {
-		// If the length is larger, extract it using LittleEndian
 		length = int(binary.LittleEndian.Uint16(data[0:]))
 		n = length + 2
 		decodedBytes, _, _ := transform.Bytes(decoder, data[2:n])
