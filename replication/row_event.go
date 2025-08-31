@@ -1016,7 +1016,6 @@ func (e *RowsEvent) parseFracTime(t interface{}) interface{} {
 // see mysql sql/log_event.cc log_event_print_value
 func (e *RowsEvent) decodeValue(data []byte, tp byte, charset string, meta uint16) (v interface{}, n int, err error) {
 	var length int = 0
-
 	if tp == MYSQL_TYPE_STRING {
 		if meta >= 256 {
 			b0 := uint8(meta >> 8)
@@ -1038,6 +1037,9 @@ func (e *RowsEvent) decodeValue(data []byte, tp byte, charset string, meta uint1
 	case MYSQL_TYPE_NULL:
 		return nil, 0, nil
 	case MYSQL_TYPE_LONG:
+		if len(data) < 4 {
+			return nil, 0, nil
+		}
 		n = 4
 		v = ParseBinaryInt32(data)
 	case MYSQL_TYPE_TINY:
