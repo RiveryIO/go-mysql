@@ -436,27 +436,29 @@ func isSafeIdentifier(s string) bool {
 
 func (c *Canal) GenerateCharsetQuery() (string, error) {
 	query := `
-		SELECT 
-			c.ORDINAL_POSITION,
-			CASE 
-				WHEN c.CHARACTER_SET_NAME IS NOT NULL THEN c.CHARACTER_SET_NAME
-				WHEN c.DATA_TYPE IN ('binary','varbinary','tinyblob','blob','mediumblob','longblob') THEN col.CHARACTER_SET_NAME
-			END AS CHARACTER_SET_NAME,
-			c.COLUMN_NAME
-		FROM 
-			information_schema.COLUMNS c
-		LEFT JOIN information_schema.TABLES t
-			ON t.TABLE_SCHEMA = c.TABLE_SCHEMA AND t.TABLE_NAME = c.TABLE_NAME
-		LEFT JOIN information_schema.COLLATIONS col
-			ON col.COLLATION_NAME = t.TABLE_COLLATION
-		WHERE 
-			c.TABLE_SCHEMA = ?
-			AND c.TABLE_NAME = ?
-			AND (c.CHARACTER_SET_NAME IS NOT NULL OR c.DATA_TYPE IN ('binary','varbinary','tinyblob','blob','mediumblob','longblob'));
-	`
+       SELECT 
+          c.ORDINAL_POSITION,
+          CASE 
+             WHEN c.CHARACTER_SET_NAME IS NOT NULL THEN c.CHARACTER_SET_NAME
+             WHEN c.DATA_TYPE IN ('binary','varbinary','tinyblob','blob','mediumblob','longblob') THEN col.CHARACTER_SET_NAME
+             ELSE col.CHARACTER_SET_NAME
+          END AS CHARACTER_SET_NAME,
+          c.COLUMN_NAME
+       FROM 
+          information_schema.COLUMNS c
+       LEFT JOIN information_schema.TABLES t
+          ON t.TABLE_SCHEMA = c.TABLE_SCHEMA AND t.TABLE_NAME = c.TABLE_NAME
+       LEFT JOIN information_schema.COLLATIONS col
+          ON col.COLLATION_NAME = t.TABLE_COLLATION
+       WHERE 
+          c.TABLE_SCHEMA = ?
+          AND c.TABLE_NAME = ?
+          AND (c.CHARACTER_SET_NAME IS NOT NULL 
+               OR c.DATA_TYPE IN ('binary','varbinary','tinyblob','blob','mediumblob','longblob')
+               OR c.DATA_TYPE IN ('varchar','char','text','tinytext','mediumtext','longtext'));
+    `
 
 	return query, nil
-
 }
 
 func (c *Canal) setColumnsCharsetFromRows(tableRegex string, rows *sql.Rows) error {
@@ -508,6 +510,9 @@ func (c *Canal) GetColumnsCharsets() error {
 			return fmt.Errorf("failed to generate charset query: %w", err)
 		}
 
+		// ADD: Log what table we're processing
+		log.Infof("Fetching charset mappings for %s.%s", dbName, tableName)
+
 		rows, err := db.QueryContext(c.ctx, query, dbName, tableName)
 		if err != nil {
 			return fmt.Errorf("error occurred while executing query: %s on db: %s on table: %s. error: %v",
@@ -521,6 +526,11 @@ func (c *Canal) GetColumnsCharsets() error {
 				panic(fmt.Errorf("failed to set charset from rows: %w", err))
 			}
 		}()
+
+		// ADD: Log final map contents for this table
+		log.Infof("Table %s charset map populated with %d entries: %+v",
+			tableRegex, len(c.cfg.ColumnCharset[tableRegex]), c.cfg.ColumnCharset[tableRegex])
+
 	}
 
 	return nil
