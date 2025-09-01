@@ -509,16 +509,11 @@ func (c *Canal) GetColumnsCharsets() error {
 		if err != nil {
 			return fmt.Errorf("failed to generate charset query: %w", err)
 		}
-
-		// ADD: Log what table we're processing
-		log.Infof("Fetching charset mappings for %s.%s", dbName, tableName)
-
 		rows, err := db.QueryContext(c.ctx, query, dbName, tableName)
 		if err != nil {
 			return fmt.Errorf("error occurred while executing query: %s on db: %s on table: %s. error: %v",
 				query, dbName, tableName, errors.Trace(err))
 		}
-
 		// Ensure rows are closed after processing
 		func() {
 			defer rows.Close()
@@ -526,10 +521,6 @@ func (c *Canal) GetColumnsCharsets() error {
 				panic(fmt.Errorf("failed to set charset from rows: %w", err))
 			}
 		}()
-
-		// ADD: Log final map contents for this table
-		log.Infof("Table %s charset map populated with %d entries: %+v",
-			tableRegex, len(c.cfg.ColumnCharset[tableRegex]), c.cfg.ColumnCharset[tableRegex])
 
 	}
 
