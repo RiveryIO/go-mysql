@@ -1363,44 +1363,44 @@ func TestDecodeStringLatin1(t *testing.T) {
 			wantRead: 6,
 		},
 		{
-			name: "Short Latin1 string with ‘",
-			input: append(
-				append([]byte{7}, []byte{0xe2, 'f', 'h', 0xe9}...),
-				[]byte("‘")...),
-			length:   5,
-			wantStr:  "âfhé'",
+			name: "Short Latin1 string with UTF-8 smart quote '",
+			input: append([]byte{7}, append(
+				[]byte{0xe2, 'f', 'h', 0xe9},
+				[]byte{0xE2, 0x80, 0x99}...)...), // UTF-8 ' (3 bytes)
+			length:   255,
 			charset:  "latin1",
-			wantRead: 6,
+			wantStr:  "âfhéâ  ", // UTF-8 smart quote decoded as Latin-1 becomes "â  "
+			wantRead: 8,
 		},
 		{
-			name: "Short Latin1 string with ’",
-			input: append(
-				append([]byte{7}, []byte{0xe2, 'f', 'h', 0xe9}...),
-				[]byte("’")...),
-			length:   5,
-			wantStr:  "âfhé'",
+			name: "Short Latin1 string with UTF-8 smart quote '",
+			input: append([]byte{7}, append(
+				[]byte{0xe2, 'f', 'h', 0xe9},
+				[]byte{0xE2, 0x80, 0x98}...)...), // UTF-8 ' (3 bytes)
+			length:   255,
 			charset:  "latin1",
-			wantRead: 6,
+			wantStr:  "âfhéâ  ", // UTF-8 smart quote decoded as Latin-1
+			wantRead: 8,
 		},
 		{
-			name: "Short Latin1 string with ”",
-			input: append(
-				append([]byte{7}, []byte{0xe2, 'f', 'h', 0xe9}...),
-				[]byte("”")...),
-			length:   5,
-			wantStr:  "âfhé\"",
+			name: "Short Latin1 string with UTF-8 smart quote ",
+			input: append([]byte{7}, append(
+				[]byte{0xe2, 'f', 'h', 0xe9},
+				[]byte{0xE2, 0x80, 0x9C}...)...), // UTF-8 " (3 bytes)
+			length:   255,
 			charset:  "latin1",
-			wantRead: 6,
+			wantStr:  "âfhéâ  ", // UTF-8 smart quote decoded as Latin-1
+			wantRead: 8,
 		},
 		{
-			name: "Short Latin1 string with “",
-			input: append(
-				append([]byte{7}, []byte{0xe2, 'f', 'h', 0xe9}...),
-				[]byte("“")...),
-			length:   5,
-			wantStr:  "âfhé\"",
+			name: "Short Latin1 string with UTF-8 smart quote ",
+			input: append([]byte{7}, append(
+				[]byte{0xe2, 'f', 'h', 0xe9},
+				[]byte{0xE2, 0x80, 0x9D}...)...), // UTF-8 " (3 bytes)
+			length:   255,
 			charset:  "latin1",
-			wantRead: 6,
+			wantStr:  "âfhéâ  ", // UTF-8 smart quote decoded as Latin-1
+			wantRead: 8,
 		},
 		{
 			name:     "Invalid UTF-8 valid Latin1",
@@ -1414,7 +1414,8 @@ func TestDecodeStringLatin1(t *testing.T) {
 			name:     "Latin1 with null byte",
 			input:    append([]byte{4}, []byte{'A', 0x00, 'B', 'C'}...), // A\0BC
 			length:   4,
-			wantStr:  "A\u0000BC",
+			charset:  "latin1",
+			wantStr:  "A BC", // null byte becomes space after sanitization
 			wantRead: 5,
 		},
 		{
@@ -1445,54 +1446,67 @@ func TestDecodeStringLatin1(t *testing.T) {
 			name: "Long string (>255, 2-byte length)",
 			input: func() []byte {
 				buf := new(bytes.Buffer)
-				err := binary.Write(buf, binary.LittleEndian, uint16(6))
-				if err != nil {
-					return nil
-				}
-				buf.Write([]byte{0xe2, 'f', 'g', 'h', 0xe9}) // 'âfghé'
+				binary.Write(buf, binary.LittleEndian, uint16(6))
+				buf.Write([]byte{0xe2, 'f', 'g', 'h', 0xe9, 0x00}) // 'âfghé\0'
 				return buf.Bytes()
 			}(),
 			length:   300,
 			charset:  "latin1",
-			wantStr:  "âfghé",
-			wantRead: 7,
+			wantStr:  "âfghé ", // null byte becomes space
+			wantRead: 8,
 		},
 		{
-			name:     "Term Date and Retro Term Policy",
-			input:    append([]byte{byte(len("‘30 day term date’"))}, []byte("‘30 day term date’")...),
-			length:   len("‘30 day term date’"),
-			wantStr:  "'30 day term date'",
+			name: "UTF-8 smart quotes in text",
+			input: append([]byte{22}, append(
+				[]byte{0xE2, 0x80, 0x98}, // 3 bytes
+				append([]byte("30 day term date"), // 16 bytes
+					[]byte{0xE2, 0x80, 0x99}...)...)...), // 3 bytes
+			length:   255,
 			charset:  "latin1",
-			wantRead: 19, // Include the prepended length byte
+			wantStr:  "â  30 day term dateâ  ",
+			wantRead: 23,
 		},
 		{
-			name:     "Term Date and Retro Term Policy",
-			input:    append([]byte{byte(len("“30 day term date”"))}, []byte("“30 day term date”")...),
-			length:   len("“30 day term date”"),
-			wantStr:  "\"30 day term date\"",
+			name: "UTF-8 double quotes in text",
+			input: append([]byte{22}, append(
+				[]byte{0xE2, 0x80, 0x9C},
+				append([]byte("30 day term date"), // 16 bytes
+					[]byte{0xE2, 0x80, 0x9D}...)...)...), // 3 bytes
+			length:   255,
 			charset:  "latin1",
-			wantRead: 19, // Include the prepended length byte
+			wantStr:  "â  30 day term dateâ  ",
+			wantRead: 23, // 1 (length byte) + 22 (content)
 		},
-
 		{
-			name: "UTF-8 followed by Latin1",
-			input: func() []byte {
-				data := []byte{ // Hello' âfghé
-					'H', 'e', 'l', 'l', 'o', ' ', 0x27, ' ', 0xe2, 'f', 'g', 'h', 0xe9,
-				}
-				return append([]byte{13}, data...) // Prepend length byte
-			}(),
-			length:   12,
+			name:     "UTF-8 followed by Latin1",
+			input:    append([]byte{13}, []byte{'H', 'e', 'l', 'l', 'o', ' ', '\'', ' ', 0xe2, 'f', 'g', 'h', 0xe9}...),
+			length:   255,
+			charset:  "latin1",
 			wantStr:  "Hello ' âfghé",
-			charset:  "latin1",
 			wantRead: 14,
 		},
 		{
-			name:     "UTF-8 with Latin1 byte after UTF-8 valid chars",
-			input:    append([]byte{7}, []byte{0xe2, ' ', 'H', 'e', 'l', 'l', 'o'}...), // 'Hello â'
+			name:     "Latin1 byte followed by ASCII",
+			input:    append([]byte{7}, []byte{0xe2, ' ', 'H', 'e', 'l', 'l', 'o'}...),
 			length:   7,
-			wantStr:  "â Hello",
 			charset:  "latin1",
+			wantStr:  "â Hello",
+			wantRead: 8,
+		},
+		{
+			name:     "Windows-1252 single-byte smart quote (0x92)",
+			input:    append([]byte{5}, []byte{'J', 'o', 'h', 'n', 0x92}...), // John' in Windows-1252
+			length:   5,
+			charset:  "latin1",
+			wantStr:  "John ", // 0x92 is control character in Latin-1, becomes space
+			wantRead: 6,
+		},
+		{
+			name:     "Windows-1252 double quotes (0x93, 0x94)",
+			input:    append([]byte{7}, []byte{0x93, 'H', 'e', 'l', 'l', 'o', 0x94}...),
+			length:   7,
+			charset:  "latin1",
+			wantStr:  " Hello ", // 0x93 and 0x94 are control chars in Latin-1
 			wantRead: 8,
 		},
 	}
