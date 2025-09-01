@@ -1336,10 +1336,23 @@ func decodeString(data []byte, length int) (v string, n int) {
 
 // Replaces smart quotes with ASCII equivalents
 func normalizeSmartQuotes(content []byte) []byte {
-	content = bytes.ReplaceAll(content, []byte("‘"), []byte("'"))
-	content = bytes.ReplaceAll(content, []byte("’"), []byte("'"))
-	content = bytes.ReplaceAll(content, []byte("“"), []byte("\""))
-	content = bytes.ReplaceAll(content, []byte("”"), []byte("\""))
+	content = bytes.ReplaceAll(content, []byte{0xE2, 0x80, 0x99}, []byte("'"))  // '
+	content = bytes.ReplaceAll(content, []byte{0xE2, 0x80, 0x9C}, []byte("\"")) // "
+	content = bytes.ReplaceAll(content, []byte{0xE2, 0x80, 0x9D}, []byte("\"")) // "
+
+	content = bytes.ReplaceAll(content, []byte{0x91}, []byte("'"))  // '
+	content = bytes.ReplaceAll(content, []byte{0x92}, []byte("'"))  // '
+	content = bytes.ReplaceAll(content, []byte{0x93}, []byte("\"")) // "
+	content = bytes.ReplaceAll(content, []byte{0x94}, []byte("\"")) // "
+
+	content = bytes.ReplaceAll(content, []byte{0x85}, []byte("...")) // …
+	content = bytes.ReplaceAll(content, []byte{0x96}, []byte("-"))   // –
+	content = bytes.ReplaceAll(content, []byte{0x97}, []byte("--"))  // —
+
+	content = bytes.ReplaceAll(content, []byte("â€™"), []byte("'"))     // Corrupted '
+	content = bytes.ReplaceAll(content, []byte("â€œ"), []byte("\""))    // Corrupted "
+	content = bytes.ReplaceAll(content, []byte("â€\x9d"), []byte("\"")) // Corrupted "
+
 	return content
 }
 
