@@ -1415,7 +1415,7 @@ func decodeStringWithEncoder(data []byte, length int, enc encoding.Encoding) (v 
 		n = length + 1
 		decodedBytes, _, _ := transform.Bytes(decoder, data[1:n])
 		if !supportsSmartQuotes(enc) {
-			decodedBytes = normalizeSmartQuotes(decodedBytes)
+			data = replaceUnsupportedCharacters(data, length)
 		}
 		v = string(decodedBytes)
 	} else {
@@ -1424,10 +1424,11 @@ func decodeStringWithEncoder(data []byte, length int, enc encoding.Encoding) (v 
 		n = length + 2
 		decodedBytes, _, _ := transform.Bytes(decoder, data[2:n])
 		if !supportsSmartQuotes(enc) {
-			decodedBytes = normalizeSmartQuotes(decodedBytes)
+			data = replaceUnsupportedCharacters(data, length)
 		}
 		v = string(decodedBytes)
 	}
+
 	return
 }
 
