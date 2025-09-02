@@ -1363,66 +1363,24 @@ func supportsSmartQuotes(enc encoding.Encoding) bool {
 	return false
 }
 
-func replaceUnsupportedCharacters(data []byte, length int) []byte {
-	if len(data) == 0 {
-		return data
-	}
-
-	var content []byte
-	var prefix []byte
-	var contentLength int
-	var prefixLen int
-
-	if length > 255 {
-		// 2-byte length prefix (LittleEndian)
-		prefixLen = 2
-		contentLength = int(binary.LittleEndian.Uint16(data[:2]))
-		if contentLength > len(data)-prefixLen {
-			contentLength = len(data) - prefixLen
-		}
-		content = data[prefixLen : prefixLen+contentLength]
-	} else {
-		// 1-byte length prefix
-		prefixLen = 1
-		contentLength = int(data[0])
-		if contentLength > len(data)-prefixLen {
-			contentLength = len(data) - prefixLen
-		}
-		content = data[prefixLen : prefixLen+contentLength]
-	}
-
-	// Replace unsupported characters
-	content = normalizeSmartQuotes(content)
-
-	// Rebuild prefix with new length
-	if prefixLen == 2 {
-		prefix = make([]byte, 2)
-		binary.LittleEndian.PutUint16(prefix, uint16(len(content)))
-	} else {
-		prefix = []byte{byte(len(content))}
-	}
-
-	return append(prefix, content...)
-}
-
 func decodeStringWithEncoder(data []byte, length int, enc encoding.Encoding) (v string, n int) {
-	// Define the Latin1 decoder
 	decoder := enc.NewDecoder()
-	if !supportsSmartQuotes(enc) {
-		data = replaceUnsupportedCharacters(data, length)
-	}
 
 	if length < 256 {
-		// If the length is smaller than 256, extract the length from the first byte
 		length = int(data[0])
 		n = length + 1
 		decodedBytes, _, _ := transform.Bytes(decoder, data[1:n])
+		if !supportsSmartQuotes(enc) {
+			decodedBytes = normalizeSmartQuotes(decodedBytes)
+		}
 		v = string(decodedBytes)
 	} else {
-		// If the length is larger, extract it using LittleEndian
 		length = int(binary.LittleEndian.Uint16(data[0:]))
 		n = length + 2
 		decodedBytes, _, _ := transform.Bytes(decoder, data[2:n])
+		if !supportsSmartQuotes(enc) {
+			decodedBytes = normalizeSmartQuotes(decodedBytes)
+		}
 		v = string(decodedBytes)
 	}
 
