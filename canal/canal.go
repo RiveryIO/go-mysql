@@ -438,11 +438,14 @@ func (c *Canal) GenerateCharsetQuery() (string, error) {
 	query := `
        SELECT 
           c.ORDINAL_POSITION,
-          CASE 
-             WHEN c.CHARACTER_SET_NAME IS NOT NULL THEN c.CHARACTER_SET_NAME
-             WHEN c.DATA_TYPE IN ('binary','varbinary','tinyblob','blob','mediumblob','longblob') THEN col.CHARACTER_SET_NAME
-             ELSE col.CHARACTER_SET_NAME
-          END AS CHARACTER_SET_NAME,
+          COALESCE(
+             CASE 
+                WHEN c.CHARACTER_SET_NAME IS NOT NULL THEN c.CHARACTER_SET_NAME
+                WHEN c.DATA_TYPE IN ('binary','varbinary','tinyblob','blob','mediumblob','longblob') THEN col.CHARACTER_SET_NAME
+                ELSE col.CHARACTER_SET_NAME
+             END,
+             'utf8mb4'
+          ) AS CHARACTER_SET_NAME,
           c.COLUMN_NAME
        FROM 
           information_schema.COLUMNS c
@@ -465,12 +468,19 @@ func (c *Canal) setColumnsCharsetFromRows(tableRegex string, rows *sql.Rows) err
 	c.cfg.ColumnCharset[tableRegex] = make(map[int]string)
 	for rows.Next() {
 		var ordinal int
-		var charset, columnName string
+		var charset, columnName sql.NullString
 		if err := rows.Scan(&ordinal, &charset, &columnName); err != nil {
 			return errors.Annotate(err, "failed to scan charset row")
 		}
-		c.cfg.ColumnCharset[tableRegex][ordinal] = charset
-		log.Infof("Column Name: %s, Ordinal: %d, Charset: %s", columnName, ordinal, charset)
+
+		// Handle NULL charset values properly
+		charsetValue := "utf8mb4" // default charset
+		if charset.Valid && charset.String != "" {
+			charsetValue = charset.String
+		}
+
+		c.cfg.ColumnCharset[tableRegex][ordinal] = charsetValue
+		log.Infof("Column Name: %s, Ordinal: %d, Charset: %s", columnName.String, ordinal, charsetValue)
 	}
 
 	return rows.Err()
@@ -514,13 +524,12 @@ func (c *Canal) GetColumnsCharsets() error {
 			return fmt.Errorf("error occurred while executing query: %s on db: %s on table: %s. error: %v",
 				query, dbName, tableName, errors.Trace(err))
 		}
-		// Ensure rows are closed after processing
-		func() {
-			defer rows.Close()
-			if err := c.setColumnsCharsetFromRows(tableRegex, rows); err != nil {
-				panic(fmt.Errorf("failed to set charset from rows: %w", err))
-			}
-		}()
+
+		// Process rows with proper error handling
+		defer rows.Close()
+		if err := c.setColumnsCharsetFromRows(tableRegex, rows); err != nil {
+			return fmt.Errorf("failed to set charset from rows for table %s: %w", tableRegex, err)
+		}
 
 	}
 
