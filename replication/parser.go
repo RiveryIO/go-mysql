@@ -22,7 +22,9 @@ var (
 
 type BinlogParser struct {
 	// "mysql" or "mariadb", if not set, use "mysql" by default
-	flavor string
+	flavor         string
+	charset        string
+	columnsCharset map[string]map[int]string
 
 	format *FormatDescriptionEvent
 
@@ -86,7 +88,7 @@ func (p *BinlogParser) ParseFile(name string, offset int64, onEvent OnEventFunc)
 			return errors.Errorf("seek %s to %d error %v", name, offset, err)
 		}
 
-		if err = p.parseFormatDescriptionEvent(f, onEvent); err != nil {
+		if err = p.parseFormatDescriptionEvent(f, name, onEvent); err != nil {
 			return errors.Annotatef(err, "parse FormatDescriptionEvent")
 		}
 	}
@@ -95,20 +97,20 @@ func (p *BinlogParser) ParseFile(name string, offset int64, onEvent OnEventFunc)
 		return errors.Errorf("seek %s to %d error %v", name, offset, err)
 	}
 
-	return p.ParseReader(f, onEvent)
+	return p.ParseReader(f, name, onEvent)
 }
 
-func (p *BinlogParser) parseFormatDescriptionEvent(r io.Reader, onEvent OnEventFunc) error {
-	_, err := p.parseSingleEvent(r, onEvent)
+func (p *BinlogParser) parseFormatDescriptionEvent(r io.Reader, fileName string, onEvent OnEventFunc) error {
+	_, err := p.parseSingleEvent(r, fileName, onEvent)
 	return err
 }
 
 // ParseSingleEvent parses single binlog event and passes the event to onEvent function.
-func (p *BinlogParser) ParseSingleEvent(r io.Reader, onEvent OnEventFunc) (bool, error) {
-	return p.parseSingleEvent(r, onEvent)
+func (p *BinlogParser) ParseSingleEvent(r io.Reader, fileName string, onEvent OnEventFunc) (bool, error) {
+	return p.parseSingleEvent(r, fileName, onEvent)
 }
 
-func (p *BinlogParser) parseSingleEvent(r io.Reader, onEvent OnEventFunc) (bool, error) {
+func (p *BinlogParser) parseSingleEvent(r io.Reader, fileName string, onEvent OnEventFunc) (bool, error) {
 	var err error
 	var n int64
 
@@ -123,7 +125,7 @@ func (p *BinlogParser) parseSingleEvent(r io.Reader, onEvent OnEventFunc) (bool,
 	}
 
 	var h *EventHeader
-	h, err = p.parseHeader(buf.Bytes())
+	h, err = p.parseHeader(fileName, buf.Bytes())
 	if err != nil {
 		return false, errors.Trace(err)
 	}
@@ -162,13 +164,13 @@ func (p *BinlogParser) parseSingleEvent(r io.Reader, onEvent OnEventFunc) (bool,
 	return false, nil
 }
 
-func (p *BinlogParser) ParseReader(r io.Reader, onEvent OnEventFunc) error {
+func (p *BinlogParser) ParseReader(r io.Reader, name string, onEvent OnEventFunc) error {
 	for {
 		if atomic.LoadUint32(&p.stopProcessing) == 1 {
 			break
 		}
 
-		done, err := p.parseSingleEvent(r, onEvent)
+		done, err := p.parseSingleEvent(r, name, onEvent)
 		if err != nil {
 			if err == errMissingTableMapEvent {
 				continue
@@ -212,13 +214,22 @@ func (p *BinlogParser) SetFlavor(flavor string) {
 	p.flavor = flavor
 }
 
-func (p *BinlogParser) parseHeader(data []byte) (*EventHeader, error) {
+func (p *BinlogParser) SetCharset(charset string) {
+	p.charset = charset
+}
+
+func (p *BinlogParser) SetColumnsCharsets(columnCharsets map[string]map[int]string) {
+	p.columnsCharset = columnCharsets
+}
+
+func (p *BinlogParser) parseHeader(fileName string, data []byte) (*EventHeader, error) {
 	h := new(EventHeader)
 	err := h.Decode(data)
 	if err != nil {
 		return nil, err
 	}
 
+	h.FileName = fileName
 	return h, nil
 }
 
@@ -302,6 +313,8 @@ func (p *BinlogParser) parseEvent(h *EventHeader, data []byte, rawData []byte) (
 	}
 
 	if te, ok := e.(*TableMapEvent); ok {
+		te.charset = p.charset
+		te.columnsCharsets = p.columnsCharset
 		p.tables[te.TableID] = te
 	}
 
@@ -321,10 +334,10 @@ func (p *BinlogParser) parseEvent(h *EventHeader, data []byte, rawData []byte) (
 // into the parser for this to work properly on any given event.
 // Passing a new FORMAT_DESCRIPTION_EVENT into the parser will replace
 // an existing one.
-func (p *BinlogParser) Parse(data []byte) (*BinlogEvent, error) {
+func (p *BinlogParser) Parse(fileName string, data []byte) (*BinlogEvent, error) {
 	rawData := data
 
-	h, err := p.parseHeader(data)
+	h, err := p.parseHeader(fileName, data)
 
 	if err != nil {
 		return nil, err

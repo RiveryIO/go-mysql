@@ -1,7 +1,10 @@
 package replication
 
 import (
+	"bytes"
+	"encoding/binary"
 	"fmt"
+	"testing"
 
 	. "github.com/pingcap/check"
 	"github.com/shopspring/decimal"
@@ -1285,7 +1288,7 @@ func (_ *testDecodeSuite) BenchmarkUseDecimal(c *C) {
 	c.ResetTimer()
 	for i := 0; i < c.N; i++ {
 		for _, d := range decimalData {
-			_, _, _ = e.decodeValue(d.dumpData, mysql.MYSQL_TYPE_NEWDECIMAL, d.meta)
+			_, _, _ = e.decodeValue(d.dumpData, mysql.MYSQL_TYPE_NEWDECIMAL, "utf8", d.meta)
 		}
 	}
 }
@@ -1295,7 +1298,7 @@ func (_ *testDecodeSuite) BenchmarkNotUseDecimal(c *C) {
 	c.ResetTimer()
 	for i := 0; i < c.N; i++ {
 		for _, d := range decimalData {
-			_, _, _ = e.decodeValue(d.dumpData, mysql.MYSQL_TYPE_NEWDECIMAL, d.meta)
+			_, _, _ = e.decodeValue(d.dumpData, mysql.MYSQL_TYPE_NEWDECIMAL, "utf8", d.meta)
 		}
 	}
 }
@@ -1304,14 +1307,14 @@ func (_ *testDecodeSuite) TestDecimal(c *C) {
 	e := &RowsEvent{useDecimal: true}
 	e2 := &RowsEvent{useDecimal: false}
 	for _, d := range decimalData {
-		v, _, err := e.decodeValue(d.dumpData, mysql.MYSQL_TYPE_NEWDECIMAL, d.meta)
+		v, _, err := e.decodeValue(d.dumpData, mysql.MYSQL_TYPE_NEWDECIMAL, "utf8", d.meta)
 		c.Assert(err, IsNil)
 		// no trailing zero
 		dec, err := decimal.NewFromString(d.num)
 		c.Assert(err, IsNil)
 		c.Assert(dec.Equal(v.(decimal.Decimal)), IsTrue)
 
-		v, _, err = e2.decodeValue(d.dumpData, mysql.MYSQL_TYPE_NEWDECIMAL, d.meta)
+		v, _, err = e2.decodeValue(d.dumpData, mysql.MYSQL_TYPE_NEWDECIMAL, "utf8", d.meta)
 		c.Assert(err, IsNil)
 		c.Assert(v.(string), Equals, d.num)
 	}
@@ -1337,7 +1340,318 @@ func (_ *testDecodeSuite) BenchmarkInt(c *C) {
 	c.ResetTimer()
 	for i := 0; i < c.N; i++ {
 		for _, d := range intData {
-			_, _, _ = e.decodeValue(d, mysql.MYSQL_TYPE_LONG, 0)
+			_, _, _ = e.decodeValue(d, mysql.MYSQL_TYPE_LONG, "utf8", 0)
+		}
+	}
+}
+
+func TestDecodeStringLatin1(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    []byte
+		length   int
+		charset  string
+		wantStr  string
+		wantRead int
+	}{
+		{
+			name:     "Short Latin1 string",
+			input:    append([]byte{5}, []byte{0xe2, 'f', 'g', 'h', 0xe9}...), // 'âfghé'
+			length:   5,
+			charset:  "latin1",
+			wantStr:  "âfghé",
+			wantRead: 6,
+		},
+		{
+			name: "Short Latin1 string with UTF-8 smart quote '",
+			input: append([]byte{7}, append(
+				[]byte{0xe2, 'f', 'h', 0xe9},
+				[]byte{0xE2, 0x80, 0x99}...)...), // UTF-8 ' (3 bytes)
+			length:   255,
+			charset:  "latin1",
+			wantStr:  "âfhéâ  ", // UTF-8 smart quote decoded as Latin-1 becomes "â  "
+			wantRead: 8,
+		},
+		{
+			name: "Short Latin1 string with UTF-8 smart quote '",
+			input: append([]byte{7}, append(
+				[]byte{0xe2, 'f', 'h', 0xe9},
+				[]byte{0xE2, 0x80, 0x98}...)...), // UTF-8 ' (3 bytes)
+			length:   255,
+			charset:  "latin1",
+			wantStr:  "âfhéâ  ", // UTF-8 smart quote decoded as Latin-1
+			wantRead: 8,
+		},
+		{
+			name: "Short Latin1 string with UTF-8 smart quote ",
+			input: append([]byte{7}, append(
+				[]byte{0xe2, 'f', 'h', 0xe9},
+				[]byte{0xE2, 0x80, 0x9C}...)...), // UTF-8 " (3 bytes)
+			length:   255,
+			charset:  "latin1",
+			wantStr:  "âfhéâ  ", // UTF-8 smart quote decoded as Latin-1
+			wantRead: 8,
+		},
+		{
+			name: "Short Latin1 string with UTF-8 smart quote ",
+			input: append([]byte{7}, append(
+				[]byte{0xe2, 'f', 'h', 0xe9},
+				[]byte{0xE2, 0x80, 0x9D}...)...), // UTF-8 " (3 bytes)
+			length:   255,
+			charset:  "latin1",
+			wantStr:  "âfhéâ  ", // UTF-8 smart quote decoded as Latin-1
+			wantRead: 8,
+		},
+		{
+			name:     "Invalid UTF-8 valid Latin1",
+			input:    append([]byte{2}, []byte{0xC0, 0xAF}...), // invalid UTF-8, valid Latin1
+			length:   2,
+			wantStr:  "À¯",
+			charset:  "latin1",
+			wantRead: 3,
+		},
+		{
+			name:     "Latin1 with null byte",
+			input:    append([]byte{4}, []byte{'A', 0x00, 'B', 'C'}...), // A\0BC
+			length:   4,
+			charset:  "latin1",
+			wantStr:  "A BC", // null byte becomes space after sanitization
+			wantRead: 5,
+		},
+		{
+			name:     "Single Latin1 char",
+			input:    []byte{1, 0xE9}, // é
+			length:   1,
+			wantStr:  "é",
+			charset:  "latin1",
+			wantRead: 2,
+		},
+		{
+			name:     "High Latin1 bytes only",
+			input:    append([]byte{3}, []byte{0xA3, 0xE9, 0xF1}...), // £éñ
+			length:   3,
+			wantStr:  "£éñ",
+			charset:  "latin1",
+			wantRead: 4,
+		},
+		{
+			name:     "Empty string",
+			input:    []byte{0},
+			length:   0,
+			charset:  "latin1",
+			wantStr:  "",
+			wantRead: 1,
+		},
+		{
+			name: "Long string (>255, 2-byte length)",
+			input: func() []byte {
+				buf := new(bytes.Buffer)
+				binary.Write(buf, binary.LittleEndian, uint16(6))
+				buf.Write([]byte{0xe2, 'f', 'g', 'h', 0xe9, 0x00}) // 'âfghé\0'
+				return buf.Bytes()
+			}(),
+			length:   300,
+			charset:  "latin1",
+			wantStr:  "âfghé ", // null byte becomes space
+			wantRead: 8,
+		},
+		{
+			name: "UTF-8 smart quotes in text",
+			input: append([]byte{22}, append(
+				[]byte{0xE2, 0x80, 0x98}, // 3 bytes
+				append([]byte("30 day term date"), // 16 bytes
+					[]byte{0xE2, 0x80, 0x99}...)...)...), // 3 bytes
+			length:   255,
+			charset:  "latin1",
+			wantStr:  "â  30 day term dateâ  ",
+			wantRead: 23,
+		},
+		{
+			name: "UTF-8 double quotes in text",
+			input: append([]byte{22}, append(
+				[]byte{0xE2, 0x80, 0x9C},
+				append([]byte("30 day term date"), // 16 bytes
+					[]byte{0xE2, 0x80, 0x9D}...)...)...), // 3 bytes
+			length:   255,
+			charset:  "latin1",
+			wantStr:  "â  30 day term dateâ  ",
+			wantRead: 23, // 1 (length byte) + 22 (content)
+		},
+		{
+			name:     "UTF-8 followed by Latin1",
+			input:    append([]byte{13}, []byte{'H', 'e', 'l', 'l', 'o', ' ', '\'', ' ', 0xe2, 'f', 'g', 'h', 0xe9}...),
+			length:   255,
+			charset:  "latin1",
+			wantStr:  "Hello ' âfghé",
+			wantRead: 14,
+		},
+		{
+			name:     "Latin1 byte followed by ASCII",
+			input:    append([]byte{7}, []byte{0xe2, ' ', 'H', 'e', 'l', 'l', 'o'}...),
+			length:   7,
+			charset:  "latin1",
+			wantStr:  "â Hello",
+			wantRead: 8,
+		},
+		{
+			name:     "Windows-1252 single-byte smart quote (0x92)",
+			input:    append([]byte{5}, []byte{'J', 'o', 'h', 'n', 0x92}...), // John' in Windows-1252
+			length:   5,
+			charset:  "latin1",
+			wantStr:  "John ", // 0x92 is control character in Latin-1, becomes space
+			wantRead: 6,
+		},
+		{
+			name:     "Windows-1252 double quotes (0x93, 0x94)",
+			input:    append([]byte{7}, []byte{0x93, 'H', 'e', 'l', 'l', 'o', 0x94}...),
+			length:   7,
+			charset:  "latin1",
+			wantStr:  " Hello ", // 0x93 and 0x94 are control chars in Latin-1
+			wantRead: 8,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			gotStr, gotRead := decodeStringByCharSet(tt.input, tt.charset, tt.length)
+			if gotStr != tt.wantStr {
+				t.Errorf("decodeStringLatin1() got string = %q, want %q", gotStr, tt.wantStr)
+			}
+			if gotRead != tt.wantRead {
+				t.Errorf("decodeStringLatin1() got read bytes = %d, want %d", gotRead, tt.wantRead)
+			}
+		})
+	}
+}
+
+func TestDecodeByCharSet(t *testing.T) {
+	tests := []struct {
+		name    string
+		input   []byte
+		charset string
+		length  int
+		wantStr string
+	}{
+		{
+			name:    "UTF-8 charset",
+			input:   append([]byte{11}, []byte("hello world")...),
+			charset: "utf8",
+			length:  11,
+			wantStr: "hello world",
+		},
+		{
+			name:    "charset is latin1",
+			input:   append([]byte{3}, []byte{0xe2, 0x28, 0xa1}...), // invalid utf8
+			charset: "latin1",
+			length:  3,
+			wantStr: "â(¡",
+		},
+		{
+			name:    "Invalid UTF-8 but charset is utf8",
+			input:   append([]byte{3}, []byte{0xe2, 0x28, 0xa1}...), // invalid utf8
+			charset: "utf8",
+			length:  3,
+			wantStr: "�(�",
+		},
+		{
+			name:    "Valid UTF-8 and charset latin1",
+			input:   append([]byte{11}, []byte("hello world")...),
+			charset: "latin1",
+			length:  11,
+			wantStr: "hello world", // because utf8.Valid is true, decodeString should be used
+		},
+		{
+			name:    "Windows-1251 Cyrillic",
+			input:   append([]byte{6}, []byte{0xd0, 0xe0, 0xe1, 0xee, 0xf2, 0x21}...),
+			charset: "cp1251",
+			length:  6,
+			wantStr: "Работ!",
+		},
+		{
+			name:    "Greek ISO-8859-7",
+			input:   append([]byte{5}, []byte{0xe3, 0xe5, 0xe9, 0xe1, 0x21}...),
+			charset: "greek",
+			length:  5,
+			wantStr: "γεια!",
+		},
+		{
+			name:    "Hebrew ISO-8859-8",
+			input:   append([]byte{4}, []byte{0xe9, 0xf9, 0xe8, 0x21}...),
+			charset: "hebrew",
+			length:  4,
+			wantStr: "ישט!",
+		},
+		{
+			name:    "Arabic Windows-1256",
+			input:   append([]byte{3}, []byte{0xe3, 0xe1, 0x21}...),
+			charset: "cp1256",
+			length:  3,
+			wantStr: "مل!",
+		},
+		{
+			name:    "Simplified Chinese GBK",
+			input:   append([]byte{4}, []byte{0xc4, 0xe3, 0xba, 0xc3}...),
+			charset: "gbk",
+			length:  4,
+			wantStr: "你好",
+		},
+		{
+			name:    "Traditional Chinese Big5",
+			input:   append([]byte{4}, []byte{0xa7, 0x41, 0xa6, 0x6e}...),
+			charset: "big5",
+			length:  4,
+			wantStr: "你好",
+		},
+		{
+			name:    "Unknown charset fallback",
+			input:   append([]byte{5}, []byte("abcde")...),
+			charset: "unknown_charset",
+			length:  5,
+			wantStr: "abcde", // fallback to decodeString
+		},
+		{
+			name:    "Known but unsupported charset (returns nil decoder)",
+			input:   append([]byte{5}, []byte("abcde")...),
+			charset: "utf32",
+			length:  5,
+			wantStr: "abcde", // fallback to decodeString
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			gotStr, _ := decodeStringByCharSet(tt.input, tt.charset, tt.length)
+			if gotStr != tt.wantStr {
+				t.Errorf("decodeByCharSet() = %q, want %q", gotStr, tt.wantStr)
+			}
+		})
+	}
+}
+
+func TestDecodeValueBinaryFallback(t *testing.T) {
+	// Simulate VARCHAR/VAR_STRING with charset binary and invalid UTF-8
+	e := &RowsEvent{}
+	// Length-encoded: 1-byte length + bytes
+	// bytes correspond to expected visual string "1rHuÎ ð   XÅXÄ " after mapping
+	// include two leading control bytes [0x86, 0x11] which should become spaces,
+	// and a trailing 0x01 which also becomes a space
+	raw := []byte{0x11, 0x86, 0x11, '1', 'r', 'H', 'u', 0xce, 0x20, 0xf0, 0x20, 0x20, 0x20, 'X', 0xc5, 'X', 0xc4, 0x01}
+	charsets := []string{"latin1", "utf8", "utf8mb4", "cp1251", "greek", "hebrew", "cp1256", "gbk", "big5", "sjis"}
+	for _, cs := range charsets {
+		v, n, err := e.decodeValue(raw, mysql.MYSQL_TYPE_VAR_STRING, cs, 255)
+		if err != nil {
+			t.Fatalf("decodeValue error (charset=%s): %v", cs, err)
+		}
+		if n != int(raw[0])+1 {
+			t.Fatalf("read length = %d, want %d (charset=%s)", n, int(raw[0])+1, cs)
+		}
+		s, ok := v.(string)
+		if !ok {
+			t.Fatalf("value type = %T, want string (charset=%s)", v, cs)
+		}
+		want := "  1rHuÎ ð   XÅXÄ "
+		if s != want {
+			t.Fatalf("decoded string (charset=%s) = %q, want %q", cs, s, want)
 		}
 	}
 }

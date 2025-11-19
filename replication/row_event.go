@@ -1,27 +1,36 @@
 package replication
 
 import (
+	"bytes"
 	"encoding/binary"
 	"encoding/hex"
 	"fmt"
-	"io"
-	"strconv"
-	"strings"
-	"time"
-
+	. "github.com/go-mysql-org/go-mysql/mysql"
 	"github.com/pingcap/errors"
 	"github.com/shopspring/decimal"
 	"github.com/siddontang/go-log/log"
 	"github.com/siddontang/go/hack"
-
-	. "github.com/go-mysql-org/go-mysql/mysql"
+	"golang.org/x/text/encoding"
+	"golang.org/x/text/encoding/charmap"
+	"golang.org/x/text/encoding/japanese"
+	"golang.org/x/text/encoding/korean"
+	"golang.org/x/text/encoding/simplifiedchinese"
+	"golang.org/x/text/encoding/traditionalchinese"
+	"golang.org/x/text/encoding/unicode"
+	"golang.org/x/text/transform"
+	"io"
+	"strconv"
+	"strings"
+	"time"
 )
 
 var errMissingTableMapEvent = errors.New("invalid table id, no corresponding table map event")
 
 type TableMapEvent struct {
-	flavor      string
-	tableIDSize int
+	flavor          string
+	tableIDSize     int
+	charset         string
+	columnsCharsets map[string]map[int]string
 
 	TableID uint64
 
@@ -971,8 +980,12 @@ func (e *RowsEvent) decodeRows(data []byte, table *TableMapEvent, bitmap []byte)
 			row[i] = nil
 			continue
 		}
-
-		row[i], n, err = e.decodeValue(data[pos:], table.ColumnType[i], table.ColumnMeta[i])
+		tableRegex := fmt.Sprintf("%s.%s", table.Schema, table.Table)
+		charset, exists := table.columnsCharsets[tableRegex][i+1]
+		if !exists {
+			charset = "utf8"
+		}
+		row[i], n, err = e.decodeValue(data[pos:], table.ColumnType[i], charset, table.ColumnMeta[i])
 
 		if err != nil {
 			return 0, err
@@ -1001,7 +1014,7 @@ func (e *RowsEvent) parseFracTime(t interface{}) interface{} {
 }
 
 // see mysql sql/log_event.cc log_event_print_value
-func (e *RowsEvent) decodeValue(data []byte, tp byte, meta uint16) (v interface{}, n int, err error) {
+func (e *RowsEvent) decodeValue(data []byte, tp byte, charset string, meta uint16) (v interface{}, n int, err error) {
 	var length int = 0
 
 	if tp == MYSQL_TYPE_STRING {
@@ -1059,7 +1072,7 @@ func (e *RowsEvent) decodeValue(data []byte, tp byte, meta uint16) (v interface{
 		n = 4
 		t := binary.LittleEndian.Uint32(data)
 		if t == 0 {
-			v = formatZeroTime(0, 0)
+			v = nil
 		} else {
 			v = e.parseFracTime(fracTime{
 				Time:                    time.Unix(int64(t), 0),
@@ -1074,7 +1087,7 @@ func (e *RowsEvent) decodeValue(data []byte, tp byte, meta uint16) (v interface{
 		n = 8
 		i64 := binary.LittleEndian.Uint64(data)
 		if i64 == 0 {
-			v = formatZeroTime(0, 0)
+			v = nil
 		} else {
 			d := i64 / 1000000
 			t := i64 % 1000000
@@ -1109,7 +1122,7 @@ func (e *RowsEvent) decodeValue(data []byte, tp byte, meta uint16) (v interface{
 		n = 3
 		i32 := uint32(FixedLengthInt(data[0:3]))
 		if i32 == 0 {
-			v = "0000-00-00"
+			v = nil
 		} else {
 			v = fmt.Sprintf("%04d-%02d-%02d", i32/(16*32), i32/32%16, i32%32)
 		}
@@ -1141,20 +1154,31 @@ func (e *RowsEvent) decodeValue(data []byte, tp byte, meta uint16) (v interface{
 		v, err = littleDecodeBit(data, nbits, n)
 	case MYSQL_TYPE_BLOB:
 		v, n, err = decodeBlob(data, meta)
+		newValue, ok := convertToString(v)
+		if ok {
+			v = newValue
+		}
 	case MYSQL_TYPE_VARCHAR,
 		MYSQL_TYPE_VAR_STRING:
 		length = int(meta)
-		v, n = decodeString(data, length)
+		v, n = decodeStringByCharSet(data, charset, length)
 	case MYSQL_TYPE_STRING:
-		v, n = decodeString(data, length)
+		v, n = decodeStringByCharSet(data, charset, length)
 	case MYSQL_TYPE_JSON:
 		// Refer: https://github.com/shyiko/mysql-binlog-connector-java/blob/master/src/main/java/com/github/shyiko/mysql/binlog/event/deserialization/AbstractRowsEventDataDeserializer.java#L404
 		length = int(FixedLengthInt(data[0:meta]))
 		n = length + int(meta)
-		var d []byte
-		d, err = e.decodeJsonBinary(data[meta:n])
-		if err == nil {
-			v = hack.String(d)
+		//<<<<<<< HEAD
+		//		var d []byte
+		//		d, err = e.decodeJsonBinary(data[meta:n])
+		//		if err == nil {
+		//			v = hack.String(d)
+		//=======
+		v, err = e.decodeJsonBinary(data[meta:n])
+		newValue, ok := convertToString(v)
+		if ok {
+			v = newValue
+			//>>>>>>> fix/eitam/MySQLCharsetNull
 		}
 	case MYSQL_TYPE_GEOMETRY:
 		// MySQL saves Geometry as Blob in binlog
@@ -1171,6 +1195,137 @@ func (e *RowsEvent) decodeValue(data []byte, tp byte, meta uint16) (v interface{
 	return v, n, err
 }
 
+// convertToString receive an interface and convert it to string if match the desired type
+func convertToString(s interface{}) (string, bool) {
+	if s == nil {
+		return "", false
+	}
+	switch v := s.(type) {
+	case []uint8:
+		str := sanitizeNonPrintable(string(v))
+		return str, true
+	default:
+		return "", false
+	}
+}
+
+func decodeStringByCharSet(data []byte, charset string, length int) (v string, n int) {
+	enc, err := getDecoderByCharsetName(charset)
+	if err != nil {
+		log.Errorf(err.Error())
+		v, n = decodeString(data, length)
+		return sanitizeNonPrintable(v), n
+	}
+	if enc == nil {
+		log.Warnf("Falling back to default decoding for charset: %s", charset)
+		v, n = decodeString(data, length)
+		return sanitizeNonPrintable(v), n
+	}
+	v, n = decodeStringWithEncoder(data, length, enc)
+	return sanitizeNonPrintable(v), n
+}
+
+// sanitizeNonPrintable replaces non-printable runes with space for readability.
+// Printable ranges: U+0020..U+007E (ASCII) and U+00A0..
+func sanitizeNonPrintable(s string) string {
+	if s == "" {
+		return s
+	}
+	var b strings.Builder
+	b.Grow(len(s))
+	for _, r := range s {
+		if (r >= 0x20 && r <= 0x7E) || r >= 0xA0 {
+			b.WriteRune(r)
+		} else {
+			b.WriteByte(' ')
+		}
+	}
+	return b.String()
+}
+
+var charsetDecoders = map[string]encoding.Encoding{
+	// Unicode
+	"utf8":    unicode.UTF8,
+	"utf8mb3": unicode.UTF8,
+	"utf8mb4": unicode.UTF8,
+	"utf16le": unicode.UTF16(unicode.LittleEndian, unicode.UseBOM),
+	"utf16":   unicode.UTF16(unicode.BigEndian, unicode.ExpectBOM),
+	"utf32":   nil, // Not natively supported in Go's unicode package
+	"ucs2":    unicode.UTF16(unicode.LittleEndian, unicode.IgnoreBOM),
+	"ascii":   unicode.UTF8,
+
+	// Western European
+	"latin1": charmap.ISO8859_1,
+	"latin2": charmap.ISO8859_2,
+	"latin5": charmap.ISO8859_9,
+	"latin7": charmap.ISO8859_13,
+
+	// Windows encodings
+	"cp1250": charmap.Windows1250,
+	"cp1251": charmap.Windows1251,
+	"cp1256": charmap.Windows1256,
+	"cp1257": charmap.Windows1257,
+
+	// Cyrillic
+	"koi8r": charmap.KOI8R,
+	"koi8u": charmap.KOI8U,
+	"cp866": charmap.CodePage866,
+
+	// Greek
+	"greek": charmap.ISO8859_7,
+
+	// Hebrew
+	"hebrew": charmap.ISO8859_8,
+
+	// Arabic
+	"arabic": charmap.ISO8859_6,
+
+	// Thai
+	"tis620": charmap.Windows874,
+
+	// Simplified Chinese
+	"gbk":     simplifiedchinese.GBK,
+	"gb2312":  simplifiedchinese.GBK,
+	"gb18030": simplifiedchinese.GB18030,
+
+	// Traditional Chinese
+	"big5": traditionalchinese.Big5,
+
+	// Japanese
+	"sjis":      japanese.ShiftJIS,
+	"shift_jis": japanese.ShiftJIS,
+	"eucjp":     japanese.EUCJP,
+	"ujis":      japanese.EUCJP,
+	"cp932":     japanese.ShiftJIS,
+	"eucjpms":   nil, // Microsoft extension to EUC-JP (no native Go support)
+
+	// Korean
+	"euckr": korean.EUCKR,
+
+	// DOS/mac
+	"cp850":    charmap.CodePage850,
+	"cp852":    charmap.CodePage852,
+	"macroman": charmap.Macintosh,
+	"macce":    nil, // Central European (Mac); no native Go support
+
+	// Other/legacy MySQL charsets
+	"binary":   nil, // Binary/raw
+	"dec8":     nil, // DEC West European
+	"hp8":      nil, // HP Western European
+	"swe7":     nil, // Swedish
+	"armscii8": nil, // Armenian
+	"geostd8":  nil, // Georgian
+}
+
+func getDecoderByCharsetName(name string) (encoding.Encoding, error) {
+	name = strings.ToLower(name)
+	enc, ok := charsetDecoders[name]
+	if !ok {
+		return nil, fmt.Errorf("unsupported charset: %s", name)
+	}
+	return enc, nil
+}
+
 func decodeString(data []byte, length int) (v string, n int) {
 	if length < 256 {
 		length = int(data[0])
@@ -1181,6 +1336,59 @@ func decodeString(data []byte, length int) (v string, n int) {
 		length = int(binary.LittleEndian.Uint16(data[0:]))
 		n = length + 2
 		v = hack.String(data[2:n])
+	}
+
+	return
+}
+
+// Replaces smart quotes with ASCII equivalents
+func normalizeSmartQuotes(content []byte) []byte {
+	content = bytes.ReplaceAll(content, []byte("‘"), []byte("'"))
+	content = bytes.ReplaceAll(content, []byte("’"), []byte("'"))
+	content = bytes.ReplaceAll(content, []byte("“"), []byte("\""))
+	content = bytes.ReplaceAll(content, []byte("”"), []byte("\""))
+	return content
+}
+
+func supportsSmartQuotes(enc encoding.Encoding) bool {
+	switch enc {
+	// Unicode
+	case unicode.UTF8,
+		unicode.UTF16(unicode.LittleEndian, unicode.UseBOM),
+		unicode.UTF16(unicode.BigEndian, unicode.ExpectBOM),
+		unicode.UTF16(unicode.LittleEndian, unicode.IgnoreBOM), // ucs2 variant
+
+		// Chinese
+		simplifiedchinese.GBK,
+		simplifiedchinese.GB18030,
+
+		// MacRoman
+		charmap.Macintosh:
+		return true
+	}
+
+	return false
+}
+
+func decodeStringWithEncoder(data []byte, length int, enc encoding.Encoding) (v string, n int) {
+	decoder := enc.NewDecoder()
+
+	if length < 256 {
+		length = int(data[0])
+		n = length + 1
+		decodedBytes, _, _ := transform.Bytes(decoder, data[1:n])
+		if !supportsSmartQuotes(enc) {
+			decodedBytes = normalizeSmartQuotes(decodedBytes)
+		}
+		v = string(decodedBytes)
+	} else {
+		length = int(binary.LittleEndian.Uint16(data[0:]))
+		n = length + 2
+		decodedBytes, _, _ := transform.Bytes(decoder, data[2:n])
+		if !supportsSmartQuotes(enc) {
+			decodedBytes = normalizeSmartQuotes(decodedBytes)
+		}
+		v = string(decodedBytes)
 	}
 
 	return
@@ -1377,7 +1585,7 @@ func decodeTimestamp2(data []byte, dec uint16, timestampStringLocation *time.Loc
 	}
 
 	if sec == 0 {
-		return formatZeroTime(int(usec), int(dec)), n, nil
+		return nil, n, nil
 	}
 
 	return fracTime{
@@ -1406,7 +1614,7 @@ func decodeDatetime2(data []byte, dec uint16) (interface{}, int, error) {
 	}
 
 	if intPart == 0 {
-		return formatZeroTime(int(frac), int(dec)), n, nil
+		return nil, n, nil
 	}
 
 	tmp := intPart<<24 + frac

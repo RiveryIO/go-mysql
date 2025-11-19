@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -19,7 +20,8 @@ import (
 )
 
 var (
-	errSyncRunning = errors.New("Sync is running, must Close first")
+	errSyncRunning    = errors.New("Sync is running, must Close first")
+	maxHostNameLength = 60
 )
 
 // BinlogSyncerConfig is the configuration for BinlogSyncer.
@@ -28,6 +30,9 @@ type BinlogSyncerConfig struct {
 	ServerID uint32
 	// Flavor is "mysql" or "mariadb", if not set, use "mysql" default.
 	Flavor string
+
+	// MaxWaitTimeBetween Check connection
+	WaitTimeBetweenConnectionSeconds time.Duration
 
 	// Host is for MySQL server host.
 	Host string
@@ -44,6 +49,9 @@ type BinlogSyncerConfig struct {
 
 	// Charset is for MySQL client character set
 	Charset string
+
+	// columnCharset is for MySQL client character set
+	ColumnCharset map[string]map[int]string
 
 	// SemiSyncEnabled enables semi-sync or not.
 	SemiSyncEnabled bool
@@ -146,7 +154,7 @@ func NewBinlogSyncer(cfg BinlogSyncerConfig) *BinlogSyncer {
 	// Clear the Password to avoid outputing it in log.
 	pass := cfg.Password
 	cfg.Password = ""
-	log.Infof("create BinlogSyncer with config %v", cfg)
+	log.Debugf("create BinlogSyncer with config %v", cfg)
 	cfg.Password = pass
 
 	b := new(BinlogSyncer)
@@ -159,6 +167,8 @@ func NewBinlogSyncer(cfg BinlogSyncerConfig) *BinlogSyncer {
 	b.parser.SetTimestampStringLocation(b.cfg.TimestampStringLocation)
 	b.parser.SetUseDecimal(b.cfg.UseDecimal)
 	b.parser.SetVerifyChecksum(b.cfg.VerifyChecksum)
+	b.parser.SetCharset(b.cfg.Charset)
+	b.parser.SetColumnsCharsets(b.cfg.ColumnCharset)
 	b.running = false
 	b.ctx, b.cancel = context.WithCancel(context.Background())
 
@@ -178,7 +188,7 @@ func (b *BinlogSyncer) close() {
 		return
 	}
 
-	log.Info("syncer is closing...")
+	log.Debug("syncer is closing...")
 
 	b.running = false
 	b.cancel()
@@ -208,7 +218,7 @@ func (b *BinlogSyncer) close() {
 		b.c.Close()
 	}
 
-	log.Info("syncer is closed")
+	log.Debug("syncer is closed")
 }
 
 func (b *BinlogSyncer) isClosed() bool {
@@ -378,7 +388,7 @@ func (b *BinlogSyncer) GetNextPosition() Position {
 
 // StartSync starts syncing from the `pos` position.
 func (b *BinlogSyncer) StartSync(pos Position) (*BinlogStreamer, error) {
-	log.Infof("begin to sync binlog from position %s", pos)
+	log.Debugf("begin to sync binlog from position %s", pos)
 
 	b.m.Lock()
 	defer b.m.Unlock()
@@ -396,7 +406,7 @@ func (b *BinlogSyncer) StartSync(pos Position) (*BinlogStreamer, error) {
 
 // StartSyncGTID starts syncing from the `gset` GTIDSet.
 func (b *BinlogSyncer) StartSyncGTID(gset GTIDSet) (*BinlogStreamer, error) {
-	log.Infof("begin to sync binlog from GTID set %s", gset)
+	log.Debugf("begin to sync binlog from GTID set %s", gset)
 
 	b.prevGset = gset
 
@@ -527,7 +537,10 @@ func (b *BinlogSyncer) writeRegisterSlaveCommand() error {
 	b.c.ResetSequence()
 
 	hostname := b.localHostname()
-
+	if len(hostname) > maxHostNameLength {
+		runes := []rune(hostname)
+		hostname = string(runes[0:maxHostNameLength])
+	}
 	// This should be the name of slave host not the host we are connecting to.
 	data := make([]byte, 4+1+4+1+len(hostname)+1+len(b.cfg.User)+1+len(b.cfg.Password)+2+4+4)
 	pos := 4
@@ -600,13 +613,13 @@ func (b *BinlogSyncer) retrySync() error {
 		if b.currGset != nil {
 			msg = fmt.Sprintf("%v (last read GTID=%v)", msg, b.currGset)
 		}
-		log.Infof(msg)
+		log.Debugf(msg)
 
 		if err := b.prepareSyncGTID(b.prevGset); err != nil {
 			return errors.Trace(err)
 		}
 	} else {
-		log.Infof("begin to re-sync from %s", b.nextPos)
+		log.Debugf("begin to re-sync from %s", b.nextPos)
 		if err := b.prepareSyncPos(b.nextPos); err != nil {
 			return errors.Trace(err)
 		}
@@ -692,6 +705,7 @@ func (b *BinlogSyncer) onStream(s *BinlogStreamer) {
 			}
 
 			for {
+				// Read packet until CTX is done if not will continue after the loop
 				select {
 				case <-b.ctx.Done():
 					s.close()
@@ -705,7 +719,8 @@ func (b *BinlogSyncer) onStream(s *BinlogStreamer) {
 							return
 						}
 
-						log.Errorf("retry sync err: %v, wait 1s and retry again", err)
+						log.Errorf("retry sync err: %v, wait %s s and retry again", err, b.cfg.WaitTimeBetweenConnectionSeconds)
+						time.Sleep(b.cfg.WaitTimeBetweenConnectionSeconds)
 						continue
 					}
 				}
@@ -727,7 +742,11 @@ func (b *BinlogSyncer) onStream(s *BinlogStreamer) {
 
 		switch data[0] {
 		case OK_HEADER:
-			if err = b.parseEvent(s, data); err != nil {
+			if err = b.parseEvent(b.nextPos.Name, s, data); err != nil {
+				// if the error is errMissingTableMapEvent skip
+				if strings.Contains(strings.ToLower(errors.Cause(err).Error()), errMissingTableMapEvent.Error()) {
+					continue
+				}
 				s.closeWithError(err)
 				return
 			}
@@ -739,7 +758,7 @@ func (b *BinlogSyncer) onStream(s *BinlogStreamer) {
 			// refer to https://dev.mysql.com/doc/internals/en/com-binlog-dump.html#binlog-dump-non-block
 			// when COM_BINLOG_DUMP command use BINLOG_DUMP_NON_BLOCK flag,
 			// if there is no more event to send an EOF_Packet instead of blocking the connection
-			log.Info("receive EOF packet, no more binlog event now.")
+			log.Debug("receive EOF packet, no more binlog event now.")
 			continue
 		default:
 			log.Errorf("invalid stream header %c", data[0])
@@ -748,7 +767,7 @@ func (b *BinlogSyncer) onStream(s *BinlogStreamer) {
 	}
 }
 
-func (b *BinlogSyncer) parseEvent(s *BinlogStreamer, data []byte) error {
+func (b *BinlogSyncer) parseEvent(fileName string, s *BinlogStreamer, data []byte) error {
 	//skip OK byte, 0x00
 	data = data[1:]
 
@@ -759,7 +778,7 @@ func (b *BinlogSyncer) parseEvent(s *BinlogStreamer, data []byte) error {
 		data = data[2:]
 	}
 
-	e, err := b.parser.Parse(data)
+	e, err := b.parser.Parse(fileName, data)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -795,7 +814,7 @@ func (b *BinlogSyncer) parseEvent(s *BinlogStreamer, data []byte) error {
 	case *RotateEvent:
 		b.nextPos.Name = string(event.NextLogName)
 		b.nextPos.Pos = uint32(event.Position)
-		log.Infof("rotate to %s", b.nextPos)
+		log.Debugf("rotate to %s", b.nextPos)
 	case *GTIDEvent:
 		if b.prevGset == nil {
 			break
@@ -868,5 +887,5 @@ func (b *BinlogSyncer) killConnection(conn *client.Conn, id uint32) {
 			log.Error(errors.Trace(err))
 		}
 	}
-	log.Infof("kill last connection id %d", id)
+	log.Debugf("kill last connection id %d", id)
 }

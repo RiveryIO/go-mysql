@@ -2,6 +2,7 @@ package canal
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"io/ioutil"
 	"os"
@@ -11,12 +12,14 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"unicode"
 
 	"github.com/go-mysql-org/go-mysql/client"
 	"github.com/go-mysql-org/go-mysql/dump"
 	"github.com/go-mysql-org/go-mysql/mysql"
 	"github.com/go-mysql-org/go-mysql/replication"
 	"github.com/go-mysql-org/go-mysql/schema"
+	driverMysql "github.com/go-sql-driver/mysql"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser"
 	"github.com/siddontang/go-log/log"
@@ -65,6 +68,10 @@ func NewCanal(cfg *Config) (*Canal, error) {
 
 	c.ctx, c.cancel = context.WithCancel(context.Background())
 
+	if cfg.WaitTimeBetweenConnectionSeconds > 0 {
+		cfg.WaitTimeBetweenConnectionSeconds = time.Duration(5) * time.Second
+	}
+
 	c.dumpDoneCh = make(chan struct{})
 	c.eventHandler = &DummyEventHandler{}
 	c.parser = parser.New()
@@ -79,6 +86,10 @@ func NewCanal(cfg *Config) (*Canal, error) {
 	var err error
 
 	if err = c.prepareDumper(); err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	if err := c.GetColumnsCharsets(); err != nil {
 		return nil, errors.Trace(err)
 	}
 
@@ -192,6 +203,7 @@ func (c *Canal) RunFrom(pos mysql.Position) error {
 	return c.Run()
 }
 
+// Start from selected GTIDSet
 func (c *Canal) StartFromGTID(set mysql.GTIDSet) error {
 	c.master.UpdateGTIDSet(set)
 
@@ -238,15 +250,17 @@ func (c *Canal) run() error {
 }
 
 func (c *Canal) Close() {
-	log.Infof("closing canal")
+	log.Debugf("closing canal")
 	c.m.Lock()
 	defer c.m.Unlock()
 
 	c.cancel()
 	c.syncer.Close()
 	c.connLock.Lock()
-	c.conn.Close()
-	c.conn = nil
+	if c.conn != nil {
+		c.conn.Close()
+		c.conn = nil
+	}
 	c.connLock.Unlock()
 
 	_ = c.eventHandler.OnPosSynced(c.master.Position(), c.master.GTIDSet(), true)
@@ -411,22 +425,135 @@ func (c *Canal) checkBinlogRowFormat() error {
 	return nil
 }
 
+func isSafeIdentifier(s string) bool {
+	for _, r := range s {
+		if !(unicode.IsLetter(r) || unicode.IsDigit(r) || r == '_' || r == '-') {
+			return false
+		}
+	}
+	return len(s) > 0
+}
+
+func (c *Canal) GenerateCharsetQuery() (string, error) {
+	query := `
+       SELECT 
+          c.ORDINAL_POSITION,
+          COALESCE(
+             CASE 
+                WHEN c.CHARACTER_SET_NAME IS NOT NULL THEN c.CHARACTER_SET_NAME
+                WHEN c.DATA_TYPE IN ('binary','varbinary','tinyblob','blob','mediumblob','longblob') THEN col.CHARACTER_SET_NAME
+                ELSE col.CHARACTER_SET_NAME
+             END,
+             'utf8mb4'
+          ) AS CHARACTER_SET_NAME,
+          c.COLUMN_NAME
+       FROM 
+          information_schema.COLUMNS c
+       LEFT JOIN information_schema.TABLES t
+          ON t.TABLE_SCHEMA = c.TABLE_SCHEMA AND t.TABLE_NAME = c.TABLE_NAME
+       LEFT JOIN information_schema.COLLATIONS col
+          ON col.COLLATION_NAME = t.TABLE_COLLATION
+       WHERE 
+          c.TABLE_SCHEMA = ?
+          AND c.TABLE_NAME = ?
+          AND (c.CHARACTER_SET_NAME IS NOT NULL 
+               OR c.DATA_TYPE IN ('binary','varbinary','tinyblob','blob','mediumblob','longblob')
+               OR c.DATA_TYPE IN ('varchar','char','text','tinytext','mediumtext','longtext'));
+    `
+
+	return query, nil
+}
+
+func (c *Canal) setColumnsCharsetFromRows(tableRegex string, rows *sql.Rows) error {
+	c.cfg.ColumnCharset[tableRegex] = make(map[int]string)
+	for rows.Next() {
+		var ordinal int
+		var charset, columnName sql.NullString
+		if err := rows.Scan(&ordinal, &charset, &columnName); err != nil {
+			return errors.Annotate(err, "failed to scan charset row")
+		}
+
+		// Handle NULL charset values properly
+		charsetValue := "utf8mb4" // default charset
+		if charset.Valid && charset.String != "" {
+			charsetValue = charset.String
+		}
+
+		c.cfg.ColumnCharset[tableRegex][ordinal] = charsetValue
+		log.Infof("Column Name: %s, Ordinal: %d, Charset: %s", columnName.String, ordinal, charsetValue)
+	}
+
+	return rows.Err()
+}
+
+func (c *Canal) GetColumnsCharsets() error {
+	c.cfg.ColumnCharset = make(map[string]map[int]string)
+
+	var dsn string
+	if c.cfg.TLSConfig != nil {
+		if err := driverMysql.RegisterTLSConfig("custom", c.cfg.TLSConfig); err != nil {
+			return fmt.Errorf("failed to register TLS config: %w", err)
+		}
+		dsn = fmt.Sprintf("%s:%s@tcp(%s)/information_schema?tls=custom", c.cfg.User, c.cfg.Password, c.cfg.Addr)
+	} else {
+		dsn = fmt.Sprintf("%s:%s@tcp(%s)/information_schema", c.cfg.User, c.cfg.Password, c.cfg.Addr)
+	}
+	db, err := sql.Open("mysql", dsn)
+	if err != nil {
+		return fmt.Errorf("failed to open DB connection: %w", err)
+	}
+	defer db.Close()
+
+	for _, tableRegex := range c.cfg.IncludeTableRegex {
+		parts := strings.Split(tableRegex, ".")
+		if len(parts) != 2 {
+			return fmt.Errorf("invalid tableRegex format, expected db.table")
+		}
+		dbName, tableName := parts[0], parts[1]
+
+		if !isSafeIdentifier(dbName) || !isSafeIdentifier(tableName) {
+			return fmt.Errorf("invalid characters in db or table name: %s.%s", dbName, tableName)
+		}
+
+		query, err := c.GenerateCharsetQuery()
+		if err != nil {
+			return fmt.Errorf("failed to generate charset query: %w", err)
+		}
+		rows, err := db.QueryContext(c.ctx, query, dbName, tableName)
+		if err != nil {
+			return fmt.Errorf("error occurred while executing query: %s on db: %s on table: %s. error: %v",
+				query, dbName, tableName, errors.Trace(err))
+		}
+
+		// Process rows with proper error handling
+		defer rows.Close()
+		if err := c.setColumnsCharsetFromRows(tableRegex, rows); err != nil {
+			return fmt.Errorf("failed to set charset from rows for table %s: %w", tableRegex, err)
+		}
+
+	}
+
+	return nil
+}
+
 func (c *Canal) prepareSyncer() error {
 	cfg := replication.BinlogSyncerConfig{
-		ServerID:                c.cfg.ServerID,
-		Flavor:                  c.cfg.Flavor,
-		User:                    c.cfg.User,
-		Password:                c.cfg.Password,
-		Charset:                 c.cfg.Charset,
-		HeartbeatPeriod:         c.cfg.HeartbeatPeriod,
-		ReadTimeout:             c.cfg.ReadTimeout,
-		UseDecimal:              c.cfg.UseDecimal,
-		ParseTime:               c.cfg.ParseTime,
-		SemiSyncEnabled:         c.cfg.SemiSyncEnabled,
-		MaxReconnectAttempts:    c.cfg.MaxReconnectAttempts,
-		DisableRetrySync:        c.cfg.DisableRetrySync,
-		TimestampStringLocation: c.cfg.TimestampStringLocation,
-		TLSConfig:               c.cfg.TLSConfig,
+		ServerID:                         c.cfg.ServerID,
+		Flavor:                           c.cfg.Flavor,
+		User:                             c.cfg.User,
+		Password:                         c.cfg.Password,
+		Charset:                          c.cfg.Charset,
+		ColumnCharset:                    c.cfg.ColumnCharset,
+		HeartbeatPeriod:                  c.cfg.HeartbeatPeriod,
+		ReadTimeout:                      c.cfg.ReadTimeout,
+		UseDecimal:                       c.cfg.UseDecimal,
+		ParseTime:                        c.cfg.ParseTime,
+		SemiSyncEnabled:                  c.cfg.SemiSyncEnabled,
+		MaxReconnectAttempts:             c.cfg.MaxReconnectAttempts,
+		DisableRetrySync:                 c.cfg.DisableRetrySync,
+		TimestampStringLocation:          c.cfg.TimestampStringLocation,
+		TLSConfig:                        c.cfg.TLSConfig,
+		WaitTimeBetweenConnectionSeconds: c.cfg.WaitTimeBetweenConnectionSeconds,
 	}
 
 	if strings.Contains(c.cfg.Addr, "/") {
