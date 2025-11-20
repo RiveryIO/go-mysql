@@ -37,10 +37,12 @@ func (c *Canal) startSyncer() (*replication.BinlogStreamer, error) {
 }
 
 func (c *Canal) runSyncBinlog() error {
+	log.Infof("investigation: Starting binlog sync loop")
 	s, err := c.startSyncer()
 	if err != nil {
 		return err
 	}
+	log.Infof("investigation: BinlogSyncer started successfully, entering event processing loop")
 
 	savePos := false
 	force := false

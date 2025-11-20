@@ -670,7 +670,7 @@ func (b *BinlogSyncer) onStream(s *BinlogStreamer) {
 		}
 		b.wg.Done()
 	}()
-
+	log.Infof("investigation: onStream started, waiting for packets")
 	var lastLogTime time.Time
 	for {
 		data, err := b.c.ReadPacket()

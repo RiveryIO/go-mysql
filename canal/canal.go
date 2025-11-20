@@ -235,9 +235,11 @@ func (c *Canal) run() error {
 	}()
 
 	c.master.UpdateTimestamp(uint32(time.Now().Unix()))
+	log.Infof("investigation: canal.run() started, checking if dump is needed")
 
 	if !c.dumped {
 		c.dumped = true
+		log.Infof("investigation: Calling tryDump() to check dump requirements")
 
 		err := c.tryDump()
 		close(c.dumpDoneCh)
@@ -246,8 +248,12 @@ func (c *Canal) run() error {
 			log.Errorf("canal dump mysql err: %v", err)
 			return errors.Trace(err)
 		}
+		log.Infof("investigation: tryDump() completed successfully")
+	} else {
+		log.Infof("investigation: Dump phase already completed, skipping")
 	}
 
+	log.Infof("investigation: Starting binlog sync phase")
 	if err := c.runSyncBinlog(); err != nil {
 		if errors.Cause(err) != context.Canceled {
 			log.Errorf("canal start sync binlog err: %v", err)

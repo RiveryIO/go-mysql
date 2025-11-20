@@ -169,8 +169,10 @@ func (c *Canal) dump() error {
 	}
 
 	start := time.Now()
+	log.Infof("investigation: Calling DumpAndParse() - this may take several minutes for large databases")
 	log.Debug("try dump MySQL and parse")
 	if err := c.dumper.DumpAndParse(h); err != nil {
+		log.Errorf("investigation: dump() FAILED with error: %v", err)
 		return errors.Trace(err)
 	}
 
@@ -185,6 +187,9 @@ func (c *Canal) dump() error {
 		c.master.UpdateGTIDSet(h.gset)
 		startPos = h.gset
 	}
+	duration := time.Now().Sub(start).Seconds()
+	log.Infof("investigation: dump() COMPLETED successfully in %.2f seconds, starting binlog replication at %s",
+		duration, startPos)
 	log.Debugf("dump MySQL and parse OK, use %0.2f seconds, start binlog replication at %s",
 		time.Now().Sub(start).Seconds(), startPos)
 	return nil
@@ -193,17 +198,22 @@ func (c *Canal) dump() error {
 func (c *Canal) tryDump() error {
 	pos := c.master.Position()
 	gset := c.master.GTIDSet()
+	log.Infof("investigation: tryDump() called - pos: %v, gtid: %v", pos, gset)
+
 	if (len(pos.Name) > 0 && pos.Pos > 0) ||
 		(gset != nil && gset.String() != "") {
 		// we will sync with binlog name and position
 		log.Debugf("skip dump, use last binlog replication pos %s or GTID set %v", pos, gset)
+		log.Infof("investigation: SKIPPING DUMP - already have position/GTID. pos=%s, GTID=%v", pos, gset)
 		return nil
 	}
 
 	if c.dumper == nil {
+		log.Infof("investigation: SKIPPING DUMP - no mysqldump configured")
 		log.Debug("skip dump, no mysqldump")
 		return nil
 	}
+	log.Infof("investigation: Starting FULL DUMP (no position/GTID found)")
 
 	return c.dump()
 }
