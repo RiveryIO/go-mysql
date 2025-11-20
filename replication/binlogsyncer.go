@@ -671,8 +671,14 @@ func (b *BinlogSyncer) onStream(s *BinlogStreamer) {
 		b.wg.Done()
 	}()
 
+	var lastLogTime time.Time
 	for {
 		data, err := b.c.ReadPacket()
+		if time.Since(lastLogTime) >= 10*time.Second {
+			log.Infof("ReadPacket from Mysql packet size: %d", len(data))
+			lastLogTime = time.Now()
+		}
+
 		select {
 		case <-b.ctx.Done():
 			s.close()

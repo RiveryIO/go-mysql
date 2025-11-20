@@ -105,26 +105,35 @@ func NewCanal(cfg *Config) (*Canal, error) {
 	if n := len(c.cfg.IncludeTableRegex); n > 0 {
 		c.includeTableRegex = make([]*regexp.Regexp, n)
 		for i, val := range c.cfg.IncludeTableRegex {
+			log.Infof("investigation includeTableRegex regexp.Compile(val) val=%s", val)
 			reg, err := regexp.Compile(val)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
+			log.Infof("investigation c.includeTableRegex[%d] = reg %v", i, reg)
+
 			c.includeTableRegex[i] = reg
 		}
 	}
 
 	if n := len(c.cfg.ExcludeTableRegex); n > 0 {
+		log.Infof("investigation should not be used !!!c.cfg.ExcludeTableRegex); n > 0!!!")
+
 		c.excludeTableRegex = make([]*regexp.Regexp, n)
 		for i, val := range c.cfg.ExcludeTableRegex {
 			reg, err := regexp.Compile(val)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
+			log.Infof("investigation SHOULD NOT EXIST c.cfg.ExcludeTableRegex); val:%s, reg: %v", val, reg)
+
 			c.excludeTableRegex[i] = reg
 		}
 	}
 
 	if c.includeTableRegex != nil || c.excludeTableRegex != nil {
+		log.Infof("investigation Canal table filter initialized - Include patterns: %v, Exclude patterns: %v",
+			c.cfg.IncludeTableRegex, c.cfg.ExcludeTableRegex)
 		c.tableMatchCache = make(map[string]bool)
 	}
 
@@ -292,6 +301,7 @@ func (c *Canal) checkTableMatch(key string) bool {
 	if c.includeTableRegex != nil {
 		for _, reg := range c.includeTableRegex {
 			if reg.MatchString(key) {
+				log.Infof("investigation checkTableMatch table MATCHED include regex: key=%s, pattern=%v", key, reg)
 				matchFlag = true
 				break
 			}
@@ -301,6 +311,7 @@ func (c *Canal) checkTableMatch(key string) bool {
 	if matchFlag && c.excludeTableRegex != nil {
 		for _, reg := range c.excludeTableRegex {
 			if reg.MatchString(key) {
+				log.Infof("investigation checkTableMatch setting matchFlag = false cause of c.excludeTableRegex with key: %s", key)
 				matchFlag = false
 				break
 			}
@@ -316,6 +327,7 @@ func (c *Canal) GetTable(db string, table string) (*schema.Table, error) {
 	key := fmt.Sprintf("%s.%s", db, table)
 	// if table is excluded, return error and skip parsing event or dump
 	if !c.checkTableMatch(key) {
+		log.Infof("investigation event is excluded ErrExcludedTable. key:%s, schema: %s, table: %s", key, db, table)
 		return nil, ErrExcludedTable
 	}
 	c.tableLock.RLock()
@@ -331,6 +343,7 @@ func (c *Canal) GetTable(db string, table string) (*schema.Table, error) {
 		lastTime, ok := c.errorTablesGetTime[key]
 		c.tableLock.RUnlock()
 		if ok && time.Now().Sub(lastTime) < UnknownTableRetryPeriod {
+			log.Infof("investigation event is excluded ErrMissingTableMeta. key:%s, schema: %s, table: %s", key, db, table)
 			return nil, schema.ErrMissingTableMeta
 		}
 	}
@@ -339,6 +352,7 @@ func (c *Canal) GetTable(db string, table string) (*schema.Table, error) {
 	if err != nil {
 		// check table not exists
 		if ok, err1 := schema.IsTableExist(c, db, table); err1 == nil && !ok {
+			log.Infof("investigation event is excluded ErrTableNotExist. key:%s, schema: %s, table: %s", key, db, table)
 			return nil, schema.ErrTableNotExist
 		}
 		// work around : RDS HAHeartBeat
@@ -368,6 +382,7 @@ func (c *Canal) GetTable(db string, table string) (*schema.Table, error) {
 			c.tableLock.Unlock()
 			// log error and return ErrMissingTableMeta
 			log.Errorf("canal get table meta err: %v", errors.Trace(err))
+			log.Infof("investigation event is excluded ErrMissingTableMeta. key:%s, schema: %s, table: %s", key, db, table)
 			return nil, schema.ErrMissingTableMeta
 		}
 		return nil, err

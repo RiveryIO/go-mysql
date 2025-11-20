@@ -108,10 +108,12 @@ func (c *Canal) runSyncBinlog() error {
 				if e != ErrExcludedTable &&
 					e != schema.ErrTableNotExist &&
 					e != schema.ErrMissingTableMeta {
+					log.Infof("investigation handleRowsEvent returned err %v", err)
 					log.Errorf("handle rows event at (%s, %d) error %v", pos.Name, curPos, err)
 					return errors.Trace(err)
 				}
 			}
+			log.Infof("investigation not relevant event (canceld/continue) at (%s, %d)", pos.Name, curPos)
 			continue
 		case *replication.XIDEvent:
 			savePos = true
@@ -152,6 +154,7 @@ func (c *Canal) runSyncBinlog() error {
 					log.Debugf("parse query(%s) err %v", e.Query, err)
 				}
 				log.Debugln("will skip this event")
+				log.Infof("investigation replication.QueryEvent skipping this event")
 				continue
 			}
 			for _, stmt := range stmts {
@@ -177,6 +180,7 @@ func (c *Canal) runSyncBinlog() error {
 				c.master.UpdateGTIDSet(e.GSet)
 			}
 		default:
+			log.Infof("investigation switch e := ev.Event.(type -- no relevant event type continue ")
 			continue
 		}
 
@@ -263,6 +267,7 @@ func (c *Canal) handleRowsEvent(e *replication.BinlogEvent) error {
 	schema := string(ev.Table.Schema)
 	table := string(ev.Table.Table)
 
+	log.Infof("investigation new event with schema: %s, table: %s, event type: %s", schema, table, e.Header.EventType)
 	t, err := c.GetTable(schema, table)
 	if err != nil {
 		return err
