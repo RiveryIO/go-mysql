@@ -111,7 +111,13 @@ func (c *Canal) runSyncBinlog() error {
 					log.Errorf("handle rows event at (%s, %d) error %v", pos.Name, curPos, err)
 					return errors.Trace(err)
 				}
+				if c.shouldSendHeartbeat() {
+					c.sendAsHeartbeat(ev)
+					c.lastEventSentTime = time.Now()
+				}
+				continue
 			}
+			c.lastEventSentTime = time.Now()
 			continue
 		case *replication.XIDEvent:
 			savePos = true
