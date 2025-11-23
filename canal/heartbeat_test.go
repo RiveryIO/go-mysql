@@ -211,6 +211,54 @@ func TestHeartbeatTimerReset(t *testing.T) {
 	assert.False(t, c.shouldSendHeartbeat())
 }
 
+// TestFormatPositionInfo tests the formatPositionInfo helper function
+func TestFormatPositionInfo(t *testing.T) {
+	tests := []struct {
+		name     string
+		fileName string
+		logPos   uint32
+		gtid     mysql.GTIDSet
+		expected string
+	}{
+		{
+			name:     "With GTID",
+			fileName: "mysql-bin.000123",
+			logPos:   4567,
+			gtid:     mustParseGTID("6d8aec2b-6ad2-11f0-8f30-e6b37ac480a5:1-10"),
+			expected: "position (mysql-bin.000123, 4567), GTID: 6d8aec2b-6ad2-11f0-8f30-e6b37ac480a5:1-10",
+		},
+		{
+			name:     "Without GTID (nil)",
+			fileName: "mysql-bin.000456",
+			logPos:   8910,
+			gtid:     nil,
+			expected: "position (mysql-bin.000456, 8910)",
+		},
+		{
+			name:     "With empty GTID",
+			fileName: "mysql-bin.000789",
+			logPos:   1234,
+			gtid:     &mysql.MysqlGTIDSet{},
+			expected: "position (mysql-bin.000789, 1234)",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := formatPositionInfo(tt.fileName, tt.logPos, tt.gtid)
+			assert.Equal(t, tt.expected, result)
+		})
+	}
+}
+
+func mustParseGTID(gtidStr string) mysql.GTIDSet {
+	if gtidStr == "" {
+		return nil
+	}
+	gtid, _ := mysql.ParseGTIDSet("mysql", gtidStr)
+	return gtid
+}
+
 // Mock event handler for testing
 type mockHeartbeatEventHandler struct {
 	DummyEventHandler
