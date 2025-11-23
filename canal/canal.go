@@ -655,5 +655,17 @@ func (c *Canal) sendAsHeartbeat(e *replication.BinlogEvent) {
 		Header: e.Header,
 	}
 	heartbeat.Header.Gtid = c.SyncedGTIDSet()
-	c.eventHandler.OnRow(heartbeat)
+	err := c.eventHandler.OnRow(heartbeat)
+	if err != nil {
+		posInfo := formatPositionInfo(e.Header.FileName, e.Header.LogPos, heartbeat.Header.Gtid)
+		log.Warnf("Failed to send heartbeat at %s: %v", posInfo, err)
+	}
+}
+
+// Helper function to format position info with optional GTID
+func formatPositionInfo(fileName string, logPos uint32, gtid mysql.GTIDSet) string {
+	if gtid != nil && gtid.String() != "" {
+		return fmt.Sprintf("position (%s, %d), GTID: %s", fileName, logPos, gtid.String())
+	}
+	return fmt.Sprintf("position (%s, %d)", fileName, logPos)
 }
