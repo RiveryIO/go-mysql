@@ -90,6 +90,10 @@ type Config struct {
 
 	// Set TLS config
 	TLSConfig *tls.Config
+
+	// HeartbeatIntervalSeconds is the interval in seconds to send heartbeat events
+	// when no relevant events are being processed. Zero means disabled.
+	HeartbeatIntervalSeconds int `toml:"heartbeat_interval_seconds"`
 }
 
 func NewConfigWithFile(name string) (*Config, error) {

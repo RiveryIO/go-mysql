@@ -56,6 +56,9 @@ type Canal struct {
 
 	ctx    context.Context
 	cancel context.CancelFunc
+
+	lastEventSentTime time.Time
+	heartbeatInterval time.Duration
 }
 
 // canal will retry fetching unknown table's meta after UnknownTableRetryPeriod
@@ -126,6 +129,12 @@ func NewCanal(cfg *Config) (*Canal, error) {
 
 	if c.includeTableRegex != nil || c.excludeTableRegex != nil {
 		c.tableMatchCache = make(map[string]bool)
+	}
+
+	if c.cfg.HeartbeatIntervalSeconds > 0 {
+		c.heartbeatInterval = time.Duration(c.cfg.HeartbeatIntervalSeconds) * time.Second
+		c.lastEventSentTime = time.Now()
+		log.Infof("Heartbeat interval set to %d seconds", c.cfg.HeartbeatIntervalSeconds)
 	}
 
 	return c, nil
@@ -621,4 +630,42 @@ func (c *Canal) SyncedTimestamp() uint32 {
 
 func (c *Canal) SyncedGTIDSet() mysql.GTIDSet {
 	return c.master.GTIDSet()
+}
+
+// shouldSendHeartbeat checks if enough time has passed since the last event was sent
+func (c *Canal) shouldSendHeartbeat() bool {
+	if c.heartbeatInterval == 0 {
+		return false
+	}
+	return time.Since(c.lastEventSentTime) >= c.heartbeatInterval
+}
+
+// sendAsHeartbeat converts a BinlogEvent to a heartbeat event and sends it to the handler
+func (c *Canal) sendAsHeartbeat(e *replication.BinlogEvent) {
+	_, ok := e.Event.(*replication.RowsEvent)
+	if !ok {
+		log.Warnf("Failed to send heartbeat: event is not a RowsEvent, type: %T", e.Event)
+		return
+	}
+
+	heartbeat := &RowsEvent{
+		Table:  nil,
+		Action: "heartbeat",
+		Rows:   nil,
+		Header: e.Header,
+	}
+	heartbeat.Header.Gtid = c.SyncedGTIDSet()
+	err := c.eventHandler.OnRow(heartbeat)
+	if err != nil {
+		posInfo := formatPositionInfo(e.Header.FileName, e.Header.LogPos, heartbeat.Header.Gtid)
+		log.Warnf("Failed to send heartbeat at %s: %v", posInfo, err)
+	}
+}
+
+// Helper function to format position info with optional GTID
+func formatPositionInfo(fileName string, logPos uint32, gtid mysql.GTIDSet) string {
+	if gtid != nil && gtid.String() != "" {
+		return fmt.Sprintf("position (%s, %d), GTID: %s", fileName, logPos, gtid.String())
+	}
+	return fmt.Sprintf("position (%s, %d)", fileName, logPos)
 }
