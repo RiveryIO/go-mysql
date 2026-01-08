@@ -508,8 +508,10 @@ func TestIsSafeIdentifier(t *testing.T) {
 		{"unicode letters", "tàble", true},
 		{"chinese characters", "表格", true},
 
+		// Space is valid (MySQL allows spaces in identifiers when quoted)
+		{"space", "my table", true},
+
 		// Invalid identifiers
-		{"space", "my table", false},
 		{"dot", "my.table", false},
 		{"at symbol", "@table", false},
 		{"hash symbol", "#table", false},

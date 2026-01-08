@@ -436,7 +436,7 @@ func (c *Canal) checkBinlogRowFormat() error {
 
 func isSafeIdentifier(s string) bool {
 	for _, r := range s {
-		if !(unicode.IsLetter(r) || unicode.IsDigit(r) || r == '_' || r == '-') {
+		if !(unicode.IsLetter(r) || unicode.IsDigit(r) || r == '_' || r == '-' || r == ' ') {
 			return false
 		}
 	}
