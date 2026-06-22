@@ -3,11 +3,12 @@ package canal
 import (
 	"flag"
 	"fmt"
-	"github.com/DATA-DOG/go-sqlmock"
-	"github.com/stretchr/testify/assert"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/DATA-DOG/go-sqlmock"
+	"github.com/stretchr/testify/assert"
 
 	"github.com/go-mysql-org/go-mysql/mysql"
 	"github.com/go-mysql-org/go-mysql/replication"
@@ -51,8 +52,11 @@ func (s *canalTestSuite) SetUpSuite(c *C) {
 	cfg.Dump.Where = "id>0"
 
 	// include & exclude config
+	// NOTE: GetColumnsCharsets (called from NewCanal) requires each IncludeTableRegex
+	// entry to be a literal db.table, so this uses "test.canal_test" rather than a
+	// cross-db regex like ".*\\.canal_test".
 	cfg.IncludeTableRegex = make([]string, 1)
-	cfg.IncludeTableRegex[0] = ".*\\.canal_test"
+	cfg.IncludeTableRegex[0] = "test.canal_test"
 	cfg.ExcludeTableRegex = make([]string, 2)
 	cfg.ExcludeTableRegex[0] = "mysql\\..*"
 	cfg.ExcludeTableRegex[1] = ".*\\..*_inner"
@@ -191,9 +195,12 @@ func (s *canalTestSuite) TestCanalFilter(c *C) {
 	sch, err := s.c.GetTable("test", "canal_test")
 	c.Assert(err, IsNil)
 	c.Assert(sch, NotNil)
-	_, err = s.c.GetTable("not_exist_db", "canal_test")
-	c.Assert(errors.Trace(err), Not(Equals), ErrExcludedTable)
 	// excluded
+	// IncludeTableRegex is the literal "test.canal_test", so a table in another
+	// database is not matched and is therefore excluded.
+	sch, err = s.c.GetTable("not_exist_db", "canal_test")
+	c.Assert(errors.Cause(err), Equals, ErrExcludedTable)
+	c.Assert(sch, IsNil)
 	sch, err = s.c.GetTable("test", "canal_test_inner")
 	c.Assert(errors.Cause(err), Equals, ErrExcludedTable)
 	c.Assert(sch, IsNil)
@@ -385,25 +392,7 @@ func TestWithoutSchemeExp(t *testing.T) {
 func TestGenerateCharsetQuery(t *testing.T) {
 	c := &Canal{}
 
-	expected := `
-		SELECT 
-		    c.ORDINAL_POSITION,
-			CASE 
-				WHEN c.CHARACTER_SET_NAME IS NOT NULL THEN c.CHARACTER_SET_NAME
-				WHEN c.DATA_TYPE IN ('binary','varbinary','tinyblob','blob','mediumblob','longblob') THEN col.CHARACTER_SET_NAME
-			END AS CHARACTER_SET_NAME,
-			c.COLUMN_NAME
-		FROM 
-			information_schema.COLUMNS c
-		LEFT JOIN information_schema.TABLES t
-			ON t.TABLE_SCHEMA = c.TABLE_SCHEMA AND t.TABLE_NAME = c.TABLE_NAME
-		LEFT JOIN information_schema.COLLATIONS col
-			ON col.COLLATION_NAME = t.TABLE_COLLATION
-		WHERE 
-			c.TABLE_SCHEMA = ?
-			AND c.TABLE_NAME = ?
-			AND (c.CHARACTER_SET_NAME IS NOT NULL OR c.DATA_TYPE IN ('binary','varbinary','tinyblob','blob','mediumblob','longblob'));
-		`
+	expected := `SELECT c.ORDINAL_POSITION, COALESCE( CASE WHEN c.CHARACTER_SET_NAME IS NOT NULL THEN c.CHARACTER_SET_NAME WHEN c.DATA_TYPE IN ('binary','varbinary','tinyblob','blob','mediumblob','longblob') THEN col.CHARACTER_SET_NAME ELSE col.CHARACTER_SET_NAME END, 'utf8mb4' ) AS CHARACTER_SET_NAME, c.COLUMN_NAME FROM information_schema.COLUMNS c LEFT JOIN information_schema.TABLES t ON t.TABLE_SCHEMA = c.TABLE_SCHEMA AND t.TABLE_NAME = c.TABLE_NAME LEFT JOIN information_schema.COLLATIONS col ON col.COLLATION_NAME = t.TABLE_COLLATION WHERE c.TABLE_SCHEMA = ? AND c.TABLE_NAME = ? AND (c.CHARACTER_SET_NAME IS NOT NULL OR c.DATA_TYPE IN ('binary','varbinary','tinyblob','blob','mediumblob','longblob') OR c.DATA_TYPE IN ('varchar','char','text','tinytext','mediumtext','longtext'));`
 
 	actual, err := c.GenerateCharsetQuery()
 	assert.NoError(t, err)

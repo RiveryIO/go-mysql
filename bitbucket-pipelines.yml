@@ -1,0 +1,129 @@
+# Bitbucket Pipelines CI for go-mysql.
+# Aligned to mirror .github/workflows/ci.yml as closely as Bitbucket allows:
+#   * Go matrix 1.15 + 1.16 (parallel test steps).
+#   * `go test ./...` (no -race / no timeout) — same command as the GH job.
+#   * MySQL with binlog + GTID, root / empty password / db `test` on 127.0.0.1:3306
+#     (the defaults in the *_test.go flags). MySQL 5.7 to match the ubuntu-18.04 era.
+#   * Runs on every branch push AND every pull request (== GH `on: [push, pull_request]`).
+#   * Tests + golangci-lint run in parallel.
+#
+# Two unavoidable Bitbucket-isms (can't be byte-identical to GH):
+#   1. MySQL is launched with `docker run` rather than a Pipelines `service:` block,
+#      because services can't take the --log-bin/--gtid-mode flags the tests need.
+#      A `docker run -p` port is reachable at 127.0.0.1:3306 from the build step.
+#   2. golangci-lint is pinned to v1.64.8 (same major as the GitHub job's
+#      `version: latest` at time of migration) for reproducible CI. .golangci.yml
+#      has been modernized (deprecated deadcode/structcheck/varcheck removed), so a
+#      current golangci-lint runs cleanly.
+
+image: golang:1.22          # default — used by the lint step (modern Go needed for golangci-lint
+                            # 1.64.x, mirroring GH's lint job). Test steps override to 1.15/1.16 below.
+
+definitions:
+  services:
+    docker:
+      memory: 3072          # headroom for the MySQL container
+  caches:
+    gomodcache: /go/pkg/mod
+
+  steps:
+    - step: &test-go116
+        name: Tests Go 1.16 (MySQL 5.7 binlog+GTID)
+        image: golang:1.16
+        size: 2x
+        services:
+          - docker
+        caches:
+          - gomodcache
+        script: &test-script
+          - apt-get update >/dev/null && apt-get install -y --no-install-recommends default-mysql-client >/dev/null
+          - |
+            docker run -d --name mysql -p 3306:3306 \
+              -e MYSQL_ALLOW_EMPTY_PASSWORD=yes \
+              -e MYSQL_DATABASE=test \
+              mysql:5.7 \
+              --server-id=1 --log-bin=mysql-bin --binlog-format=ROW \
+              --gtid-mode=ON --enforce-gtid-consistency=ON
+          - |
+            echo "Waiting for MySQL to accept connections..."
+            for i in $(seq 1 60); do
+              if mysqladmin ping -h 127.0.0.1 -P 3306 -uroot --silent 2>/dev/null; then echo "MySQL is up"; break; fi
+              if [ "$i" = "60" ]; then echo "MySQL failed to start"; docker logs mysql; exit 1; fi
+              sleep 2
+            done
+          - mysql -h 127.0.0.1 -uroot -e "CREATE DATABASE IF NOT EXISTS test; SHOW VARIABLES LIKE 'log_bin'; SELECT @@gtid_mode;"
+          - go test ./...
+
+    - step: &test-go115
+        name: Tests Go 1.15 (MySQL 5.7 binlog+GTID)
+        image: golang:1.15
+        size: 2x
+        services:
+          - docker
+        caches:
+          - gomodcache
+        script: *test-script
+
+    - step: &lint
+        name: golangci-lint
+        caches:
+          - gomodcache
+        script:
+          - curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s -- -b "$(go env GOPATH)/bin" v1.64.8
+          - "$(go env GOPATH)/bin/golangci-lint run --timeout 5m"
+
+    # Cuts an auto-incremented semver tag (patch bump) when a commit lands on main —
+    # i.e. when a PR is merged. Only runs after the test/lint steps pass (see the
+    # `branches.main` pipeline below). Bitbucket-only: there is no equivalent in the
+    # GitHub workflow this file otherwise mirrors.
+    - step: &tag-release
+        name: Tag release (semver patch bump)
+        image: alpine/git:latest
+        clone:
+          depth: full        # need full history so all existing tags are visible
+        script:
+          - git config user.name "bitbucket-pipelines"
+          - git config user.email "pipelines@bitbucket.org"
+          - git fetch --tags --quiet
+          - |
+            latest=$(git tag -l 'v[0-9]*.[0-9]*.[0-9]*' --sort=-v:refname | head -n1)
+            if [ -z "$latest" ]; then
+              new="v0.1.0"
+              echo "No existing semver tag found; starting at $new"
+            else
+              ver=${latest#v}
+              major=$(echo "$ver" | cut -d. -f1)
+              minor=$(echo "$ver" | cut -d. -f2)
+              patch=$(echo "$ver" | cut -d. -f3)
+              new="v${major}.${minor}.$((patch + 1))"
+              echo "Latest tag $latest -> new tag $new"
+            fi
+            # No-op if HEAD is already tagged (e.g. a re-run of the same commit).
+            if git describe --exact-match --tags HEAD >/dev/null 2>&1; then
+              echo "HEAD already tagged; skipping."
+              exit 0
+            fi
+            git tag -a "$new" -m "Release $new (PR merged to main)"
+            git push origin "$new"
+
+pipelines:
+  branches:
+    # Explicit, more-specific glob: main pushes (= PR merges) run this instead of '**'.
+    # Tests/lint run first; the tag step only executes if they all pass.
+    main:
+      - parallel:
+          - step: *test-go116
+          - step: *test-go115
+          - step: *lint
+      - step: *tag-release
+    '**':
+      - parallel:
+          - step: *test-go116
+          - step: *test-go115
+          - step: *lint
+  pull-requests:
+    '**':
+      - parallel:
+          - step: *test-go116
+          - step: *test-go115
+          - step: *lint
